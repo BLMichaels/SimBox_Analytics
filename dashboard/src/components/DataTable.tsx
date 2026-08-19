@@ -14,6 +14,8 @@ type Props<T> = {
   pageSize?: number;
   emptyTitle: string;
   emptyBody: string;
+  selectedIds?: Set<string>;
+  onSelectedIdsChange?: (next: Set<string>) => void;
 };
 
 export function DataTable<T>({
@@ -23,6 +25,8 @@ export function DataTable<T>({
   pageSize = 15,
   emptyTitle,
   emptyBody,
+  selectedIds,
+  onSelectedIdsChange,
 }: Props<T>) {
   const [sortKey, setSortKey] = useState(columns[0]?.key ?? "");
   const [dir, setDir] = useState<"asc" | "desc">("desc");
@@ -64,12 +68,45 @@ export function DataTable<T>({
     );
   }
 
+  const selectable = Boolean(selectedIds && onSelectedIdsChange);
+  const pageIds = slice.map((row) => rowKey(row));
+  const allPageSelected = selectable && pageIds.length > 0 && pageIds.every((id) => selectedIds!.has(id));
+
+  function toggleOne(id: string) {
+    if (!selectedIds || !onSelectedIdsChange) return;
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    onSelectedIdsChange(next);
+  }
+
+  function togglePage() {
+    if (!selectedIds || !onSelectedIdsChange) return;
+    const next = new Set(selectedIds);
+    if (allPageSelected) {
+      for (const id of pageIds) next.delete(id);
+    } else {
+      for (const id of pageIds) next.add(id);
+    }
+    onSelectedIdsChange(next);
+  }
+
   return (
     <div>
       <div className="overflow-x-auto border border-line">
         <table className="min-w-full border-collapse text-left text-sm">
           <thead className="bg-paper-2">
             <tr>
+              {selectable ? (
+                <th scope="col" className="w-10 border-b border-line px-3 py-2">
+                  <input
+                    type="checkbox"
+                    checked={allPageSelected}
+                    onChange={togglePage}
+                    aria-label="Select all events on this page"
+                  />
+                </th>
+              ) : null}
               {columns.map((col) => (
                 <th key={col.key} scope="col" className="border-b border-line px-3 py-2 font-medium">
                   <button
@@ -88,15 +125,35 @@ export function DataTable<T>({
             </tr>
           </thead>
           <tbody className="bg-card">
-            {slice.map((row) => (
-              <tr key={rowKey(row)} className="border-b border-line last:border-b-0">
-                {columns.map((col) => (
-                  <td key={col.key} className="px-3 py-2 align-top">
-                    {col.render(row)}
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {slice.map((row) => {
+              const id = rowKey(row);
+              const checked = selectedIds?.has(id) ?? false;
+              return (
+                <tr
+                  key={id}
+                  className={[
+                    "border-b border-line last:border-b-0",
+                    checked ? "bg-teal/10" : "",
+                  ].join(" ")}
+                >
+                  {selectable ? (
+                    <td className="px-3 py-2 align-top">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleOne(id)}
+                        aria-label={`Select event ${id}`}
+                      />
+                    </td>
+                  ) : null}
+                  {columns.map((col) => (
+                    <td key={col.key} className="px-3 py-2 align-top">
+                      {col.render(row)}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

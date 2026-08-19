@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FilterBar } from "../components/FilterBar";
 import { DataTable, type Column } from "../components/DataTable";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { downloadCsv, rangeStamp } from "../lib/csv";
 import { formatDuration, formatLocal, rangeForPreset, shortSession } from "../lib/dates";
 import { supabase } from "../lib/supabase";
@@ -12,6 +13,9 @@ const PAGE_CHUNK = 1000;
 export function EventsPage() {
   const [cases, setCases] = useState<CaseRecord[]>([]);
   const [rows, setRows] = useState<CaseEventRecord[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [confirm, setConfirm] = useState<null | { ids: string[]; label: string }>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState<Filters>(() => {
     const { from, to } = rangeForPreset("last30");
@@ -82,6 +86,14 @@ export function EventsPage() {
       });
     }
     setRows(next);
+    setSelectedIds((prev) => {
+      const keep = new Set<string>();
+      const ids = new Set(next.map((r) => r.id));
+      for (const id of prev) {
+        if (ids.has(id)) keep.add(id);
+      }
+      return keep;
+    });
   }, [bounds.from, bounds.to, filters]);
 
   useEffect(() => {
@@ -122,6 +134,51 @@ export function EventsPage() {
     { key: "env", header: "Env", sortValue: (r) => String(r.metadata?.environment ?? "production"), render: (r) => String(r.metadata?.environment ?? "production") },
   ];
 
+  const testIds = rows
+    .filter((r) => {
+      const env = String(r.metadata?.environment ?? "production");
+      return env === "test" || env === "seed";
+    })
+    .map((r) => r.id);
+
+  async function deleteIds(ids: string[]) {
+    const { error: delError } = await supabase.from("case_events").delete().in("id", ids);
+    if (!delError) return;
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    const url = import.meta.env.VITE_SUPABASE_URL;
+    const anon = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    if (!token || !url || !anon) {
+      throw new Error("delete");
+    }
+    const res = await fetch(`${url.replace(/\/$/, "")}/functions/v1/admin-delete-simbox-events`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        apikey: anon,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ ids }),
+    });
+    if (!res.ok) throw new Error("delete");
+  }
+
+  async function confirmDelete() {
+    if (!confirm) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteIds(confirm.ids);
+      setSelectedIds(new Set());
+      setConfirm(null);
+      await load();
+    } catch {
+      setError("Unable to delete the selected events.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function exportCsv() {
     downloadCsv(
       `simbox-events-${rangeStamp(bounds.from, bounds.to)}.csv`,
@@ -156,6 +213,50 @@ export function EventsPage() {
         </button>
       </header>
       <FilterBar cases={cases} filters={filters} onChange={setFilters} showEventFilter showSearch />
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          className="border border-line bg-card px-3 py-1.5 text-sm disabled:opacity-40"
+          disabled={rows.length === 0}
+          onClick={() => setSelectedIds(new Set(rows.map((r) => r.id)))}
+        >
+          Select all in list
+        </button>
+        <button
+          type="button"
+          className="border border-line bg-card px-3 py-1.5 text-sm disabled:opacity-40"
+          disabled={selectedIds.size === 0}
+          onClick={() => setSelectedIds(new Set())}
+        >
+          Clear selection
+        </button>
+        <button
+          type="button"
+          className="border border-danger bg-card px-3 py-1.5 text-sm text-danger disabled:opacity-40"
+          disabled={selectedIds.size === 0 || busy}
+          onClick={() =>
+            setConfirm({
+              ids: [...selectedIds],
+              label: `${selectedIds.size} selected event${selectedIds.size === 1 ? "" : "s"}`,
+            })
+          }
+        >
+          Delete selected{selectedIds.size ? ` (${selectedIds.size})` : ""}
+        </button>
+        <button
+          type="button"
+          className="border border-line bg-card px-3 py-1.5 text-sm disabled:opacity-40"
+          disabled={testIds.length === 0 || busy}
+          onClick={() =>
+            setConfirm({
+              ids: testIds,
+              label: `${testIds.length} test/seed event${testIds.length === 1 ? "" : "s"} in this list`,
+            })
+          }
+        >
+          Delete test/seed in list{testIds.length ? ` (${testIds.length})` : ""}
+        </button>
+      </div>
       {error ? (
         <p role="alert" className="mb-4 text-sm text-danger">
           {error}
@@ -166,9 +267,24 @@ export function EventsPage() {
         rows={rows}
         rowKey={(r) => r.id}
         pageSize={25}
+        selectedIds={selectedIds}
+        onSelectedIdsChange={setSelectedIds}
         emptyTitle="No events match these filters"
         emptyBody="Try a wider date range, clear search, or include seed/test events if you are reviewing development data."
       />
+      {confirm ? (
+        <ConfirmDialog
+          title="Delete events?"
+          body={`This permanently removes ${confirm.label}. Completions and starts in reports will update after deletion.`}
+          confirmLabel={busy ? "Deleting…" : "Delete"}
+          onConfirm={() => {
+            if (!busy) void confirmDelete();
+          }}
+          onCancel={() => {
+            if (!busy) setConfirm(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

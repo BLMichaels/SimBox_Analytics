@@ -32,3 +32,7 @@ verify_jwt = false
 # Public case tracking. JWT is not used: learners are anonymous.
 # Authorization is origin CORS + payload validation + service-role insert.
 # Do not set verify_jwt = true; GitHub Pages cannot present a user JWT.
+
+[functions.admin-delete-simbox-events]
+verify_jwt = true
+# Dashboard admins only. JWT required. Service role is used only after admin_users check.
