@@ -89,11 +89,55 @@ function clipMeta(value: string, max = 64): string {
 }
 
 function clientIp(req: Request): string | null {
-  const cf = req.headers.get("cf-connecting-ip") ?? req.headers.get("true-client-ip");
-  if (cf) return cf.trim();
+  const headers = [
+    "cf-connecting-ip",
+    "true-client-ip",
+    "x-real-ip",
+    "x-client-ip",
+    "fly-client-ip",
+  ];
+  for (const name of headers) {
+    const value = req.headers.get(name)?.trim();
+    if (value) return value.split(",")[0]?.trim() || null;
+  }
   const forwarded = req.headers.get("x-forwarded-for");
   if (forwarded) return forwarded.split(",")[0]?.trim() || null;
   return null;
+}
+
+async function fetchJson(url: string, timeoutMs: number): Promise<Record<string, unknown> | null> {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: { Accept: "application/json" },
+    });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const body = (await res.json()) as unknown;
+    if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+    return body as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function applyLocality(out: Record<string, string>, body: Record<string, unknown>): void {
+  const city = body.city;
+  const region = body.region ?? body.regionName ?? body.region_name;
+  const country = body.country_name ?? body.country;
+  const postal = body.postal ?? body.zip;
+  let timezone: unknown = body.timezone;
+  if (timezone && typeof timezone === "object" && !Array.isArray(timezone)) {
+    timezone = (timezone as Record<string, unknown>).id ?? (timezone as Record<string, unknown>).name;
+  }
+  if (typeof city === "string" && city && city !== "Not found") out.city = clipMeta(city);
+  if (typeof region === "string" && region) out.region = clipMeta(region);
+  if (typeof country === "string" && country && country.length > 2) out.country = clipMeta(country);
+  else if (typeof country === "string" && country) out.country = clipMeta(country, 8);
+  if (typeof postal === "string" && postal) out.postal = clipMeta(postal, 12);
+  if (typeof timezone === "string" && timezone) out.timezone = clipMeta(timezone, 40);
 }
 
 async function lookupNetworkLocality(req: Request): Promise<Record<string, string>> {
@@ -102,29 +146,21 @@ async function lookupNetworkLocality(req: Request): Promise<Record<string, strin
   if (countryHeader && countryHeader !== "XX" && countryHeader !== "T1") {
     out.country = clipMeta(countryHeader, 8);
   }
+  const cityHeader = req.headers.get("cf-ipcity");
+  if (cityHeader) out.city = clipMeta(decodeURIComponent(cityHeader));
+  const regionHeader = req.headers.get("cf-region") ?? req.headers.get("cf-region-code");
+  if (regionHeader) out.region = clipMeta(decodeURIComponent(regionHeader));
+  const postalHeader = req.headers.get("cf-postal-code");
+  if (postalHeader) out.postal = clipMeta(postalHeader, 12);
+
   const ip = clientIp(req);
   if (!ip) return out;
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 850);
-    const res = await fetch(`https://ipapi.co/${encodeURIComponent(ip)}/json/`, {
-      signal: ctrl.signal,
-      headers: { Accept: "application/json" },
-    });
-    clearTimeout(timer);
-    if (!res.ok) return out;
-    const body = (await res.json()) as Record<string, unknown>;
-    if (body.error) return out;
-    if (typeof body.city === "string" && body.city) out.city = clipMeta(body.city);
-    if (typeof body.region === "string" && body.region) out.region = clipMeta(body.region);
-    if (typeof body.country_name === "string" && body.country_name) {
-      out.country = clipMeta(body.country_name);
-    }
-    if (typeof body.postal === "string" && body.postal) out.postal = clipMeta(body.postal, 12);
-    if (typeof body.timezone === "string" && body.timezone) out.timezone = clipMeta(body.timezone, 40);
-  } catch {
-    /* ingest must not fail if geo lookup is slow or blocked */
-  }
+  const encoded = encodeURIComponent(ip);
+  const ipwho = await fetchJson(`https://ipwho.is/${encoded}`, 1200);
+  if (ipwho && ipwho.success !== false) applyLocality(out, ipwho);
+  if (out.city && out.country) return out;
+  const ipapi = await fetchJson(`https://ipapi.co/${encoded}/json/`, 1200);
+  if (ipapi && !ipapi.error) applyLocality(out, ipapi);
   return out;
 }
 
