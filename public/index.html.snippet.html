@@ -1,11 +1,14 @@
-<!-- Safe insertion for SimBox_Penetrating_Trauma/index.html
-     Place immediately AFTER story_content/user.js. Do not move bootstrapper.min.js. -->
+<!-- Safe insertion: immediately AFTER story_content/user.js. Do not move bootstrapper.min.js. -->
 <script>
   window.SIMBOX_TRACKING_CONFIG = {
     caseKey: "SimBox_Penetrating_Trauma",
     endpointUrl: "https://ututhxkwvhpnoyrfjzbu.supabase.co/functions/v1/record-simbox-event",
     appVersion: "1.0.0",
-    debug: false
+    debug: false,
+    startSlideIds: ["5W2RpqpDfbE"],
+    completeSlideIds: ["5aNIF0c6vDb"],
+    startSlideTitles: ["triage and vitals"],
+    completeSlideTitles: ["step 4"]
   };
 </script>
 <script src="simbox-tracking.js"></script>

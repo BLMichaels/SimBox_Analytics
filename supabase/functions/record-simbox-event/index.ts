@@ -24,6 +24,10 @@ const DEFAULT_ALLOWED_ORIGINS = [
   "https://blmichaels.github.io",
   "https://www.emergencysimbox.com",
   "https://emergencysimbox.com",
+  "https://*.wixsite.com",
+  "https://*.wix.com",
+  "https://*.filesusr.com",
+  "https://*.parastorage.com",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
   "http://localhost:3000",
@@ -47,7 +51,8 @@ function originAllowed(origin: string | null, allowed: string[]): CorsResult {
     }
     if (rule.includes("*")) {
       const escaped = rule.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\\\*/g, ".*");
-      if (new RegExp(`^${escaped}$`).test(origin)) {
+      const wildcard = escaped.replace(/\*/g, ".*");
+      if (new RegExp(`^${wildcard}$`).test(origin)) {
         return { allowed: true, origin };
       }
     }
@@ -82,10 +87,14 @@ function json(
 Deno.serve(async (req: Request): Promise<Response> => {
   const allowed = parseAllowedOrigins();
   const requestOrigin = req.headers.get("origin");
-  // sendBeacon often omits Origin; still accept a validated POST.
-  const cors = requestOrigin
-    ? originAllowed(requestOrigin, allowed)
-    : { allowed: req.method === "POST", origin: allowed[0] ?? "" };
+  // sendBeacon often omits Origin. Sandboxed Wix iframes send Origin: null.
+  const missingOrOpaque = !requestOrigin || requestOrigin === "null";
+  const cors = missingOrOpaque
+    ? {
+        allowed: req.method === "POST" || req.method === "OPTIONS",
+        origin: requestOrigin === "null" ? "null" : (allowed[0] ?? ""),
+      }
+    : originAllowed(requestOrigin, allowed);
   const echoOrigin = cors.allowed ? cors.origin : (allowed[0] ?? "");
 
   if (req.method === "OPTIONS") {

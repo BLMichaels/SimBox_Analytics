@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { FilterBar } from "../components/FilterBar";
 import { DataTable, type Column } from "../components/DataTable";
 import { downloadCsv, rangeStamp } from "../lib/csv";
 import { formatDuration, formatLocal, rangeForPreset, shortSession } from "../lib/dates";
 import { supabase } from "../lib/supabase";
+import { useLiveReload } from "../lib/useLiveReload";
 import type { CaseEventRecord, CaseRecord, Filters } from "../lib/types";
 
 const PAGE_CHUNK = 1000;
@@ -40,56 +41,54 @@ export function EventsPage() {
       .then(({ data }) => setCases((data ?? []) as CaseRecord[]));
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      setError(null);
-      const collected: CaseEventRecord[] = [];
-      for (let from = 0; from < 5000; from += PAGE_CHUNK) {
-        let q = supabase
-          .from("case_events")
-          .select("*, cases(case_key, display_name, active)")
-          .gte("occurred_at", bounds.from.toISOString())
-          .lt("occurred_at", new Date(bounds.to.getTime() + 1).toISOString())
-          .order("occurred_at", { ascending: false })
-          .range(from, from + PAGE_CHUNK - 1);
-        if (filters.caseIds.length) q = q.in("case_id", filters.caseIds);
-        if (filters.eventTypes.length) q = q.in("event_type", filters.eventTypes);
-        if (filters.deliveryContexts.length) q = q.in("delivery_context", filters.deliveryContexts);
-        if (filters.deviceTypes.length) q = q.in("device_type", filters.deviceTypes);
-        const { data, error: err } = await q;
-        if (err) {
-          if (!cancelled) setError("Unable to load events.");
-          return;
-        }
-        const batch = (data ?? []) as CaseEventRecord[];
-        collected.push(...batch);
-        if (batch.length < PAGE_CHUNK) break;
+  const load = useCallback(async () => {
+    setError(null);
+    const collected: CaseEventRecord[] = [];
+    for (let from = 0; from < 5000; from += PAGE_CHUNK) {
+      let q = supabase
+        .from("case_events")
+        .select("*, cases(case_key, display_name, active)")
+        .gte("occurred_at", bounds.from.toISOString())
+        .lt("occurred_at", new Date(bounds.to.getTime() + 1).toISOString())
+        .order("occurred_at", { ascending: false })
+        .range(from, from + PAGE_CHUNK - 1);
+      if (filters.caseIds.length) q = q.in("case_id", filters.caseIds);
+      if (filters.eventTypes.length) q = q.in("event_type", filters.eventTypes);
+      if (filters.deliveryContexts.length) q = q.in("delivery_context", filters.deliveryContexts);
+      if (filters.deviceTypes.length) q = q.in("device_type", filters.deviceTypes);
+      const { data, error: err } = await q;
+      if (err) {
+        setError("Unable to load events.");
+        return;
       }
-      if (cancelled) return;
-      let next = collected;
-      if (!filters.includeNonProduction) {
-        next = next.filter((r) => (r.metadata?.environment ?? "production") === "production");
-      }
-      if (filters.search.trim()) {
-        const s = filters.search.trim().toLowerCase();
-        next = next.filter((r) => {
-          const name = r.cases?.display_name ?? "";
-          const key = r.cases?.case_key ?? "";
-          return (
-            name.toLowerCase().includes(s) ||
-            key.toLowerCase().includes(s) ||
-            r.session_id.toLowerCase().includes(s)
-          );
-        });
-      }
-      setRows(next);
+      const batch = (data ?? []) as CaseEventRecord[];
+      collected.push(...batch);
+      if (batch.length < PAGE_CHUNK) break;
     }
-    void load();
-    return () => {
-      cancelled = true;
-    };
+    let next = collected;
+    if (!filters.includeNonProduction) {
+      next = next.filter((r) => (r.metadata?.environment ?? "production") === "production");
+    }
+    if (filters.search.trim()) {
+      const s = filters.search.trim().toLowerCase();
+      next = next.filter((r) => {
+        const name = r.cases?.display_name ?? "";
+        const key = r.cases?.case_key ?? "";
+        return (
+          name.toLowerCase().includes(s) ||
+          key.toLowerCase().includes(s) ||
+          r.session_id.toLowerCase().includes(s)
+        );
+      });
+    }
+    setRows(next);
   }, [bounds.from, bounds.to, filters]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useLiveReload(load);
 
   const columns: Column<CaseEventRecord>[] = [
     { key: "local", header: "Local date/time", sortValue: (r) => r.occurred_at, render: (r) => formatLocal(r.occurred_at) },

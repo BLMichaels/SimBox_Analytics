@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { FilterBar } from "../components/FilterBar";
 import { KpiCard } from "../components/KpiCard";
 import { DashboardCharts } from "../components/DashboardCharts";
@@ -6,6 +6,7 @@ import { DataTable, type Column } from "../components/DataTable";
 import { downloadCsv, rangeStamp } from "../lib/csv";
 import { formatDuration, formatLocal, formatPercent, rangeForPreset, shortSession } from "../lib/dates";
 import { supabase } from "../lib/supabase";
+import { useLiveReload } from "../lib/useLiveReload";
 import type { CaseEventRecord, CaseRecord, DashboardMetrics, Filters } from "../lib/types";
 
 function emptyMetrics(): DashboardMetrics {
@@ -62,67 +63,64 @@ export function DashboardPage() {
       });
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      setError(null);
-      const { data, error: err } = await supabase.rpc("admin_filtered_metrics", {
-        p_from: bounds.from.toISOString(),
-        p_to: new Date(bounds.to.getTime() + 1).toISOString(),
-        p_case_ids: filters.caseIds.length ? filters.caseIds : null,
-        p_event_types: filters.eventTypes.length ? filters.eventTypes : null,
-        p_delivery_contexts: filters.deliveryContexts.length ? filters.deliveryContexts : null,
-        p_device_types: filters.deviceTypes.length ? filters.deviceTypes : null,
-        p_include_nonproduction: filters.includeNonProduction,
-      });
-      if (cancelled) return;
-      if (err || !data) {
-        setError("Unable to load metrics for this range.");
-        setMetrics(emptyMetrics());
-        return;
-      }
-      setMetrics(data as DashboardMetrics);
-
-      let q = supabase
-        .from("case_events")
-        .select("*, cases(case_key, display_name, active)")
-        .gte("occurred_at", bounds.from.toISOString())
-        .lt("occurred_at", new Date(bounds.to.getTime() + 1).toISOString())
-        .order("occurred_at", { ascending: false })
-        .limit(50);
-      if (filters.caseIds.length) q = q.in("case_id", filters.caseIds);
-      if (filters.eventTypes.length) q = q.in("event_type", filters.eventTypes);
-      if (filters.deliveryContexts.length) q = q.in("delivery_context", filters.deliveryContexts);
-      if (filters.deviceTypes.length) q = q.in("device_type", filters.deviceTypes);
-      const recentRes = await q;
-      if (cancelled) return;
-      if (recentRes.error) {
-        setRecent([]);
-        return;
-      }
-      let rows = (recentRes.data ?? []) as CaseEventRecord[];
-      if (!filters.includeNonProduction) {
-        rows = rows.filter((r) => (r.metadata?.environment ?? "production") === "production");
-      }
-      if (filters.search.trim()) {
-        const s = filters.search.trim().toLowerCase();
-        rows = rows.filter((r) => {
-          const name = r.cases?.display_name ?? "";
-          const key = r.cases?.case_key ?? "";
-          return (
-            name.toLowerCase().includes(s) ||
-            key.toLowerCase().includes(s) ||
-            r.session_id.toLowerCase().includes(s)
-          );
-        });
-      }
-      setRecent(rows);
+  const load = useCallback(async () => {
+    setError(null);
+    const { data, error: err } = await supabase.rpc("admin_filtered_metrics", {
+      p_from: bounds.from.toISOString(),
+      p_to: new Date(bounds.to.getTime() + 1).toISOString(),
+      p_case_ids: filters.caseIds.length ? filters.caseIds : null,
+      p_event_types: filters.eventTypes.length ? filters.eventTypes : null,
+      p_delivery_contexts: filters.deliveryContexts.length ? filters.deliveryContexts : null,
+      p_device_types: filters.deviceTypes.length ? filters.deviceTypes : null,
+      p_include_nonproduction: filters.includeNonProduction,
+    });
+    if (err || !data) {
+      setError("Unable to load metrics for this range.");
+      setMetrics(emptyMetrics());
+      return;
     }
-    void load();
-    return () => {
-      cancelled = true;
-    };
+    setMetrics(data as DashboardMetrics);
+
+    let q = supabase
+      .from("case_events")
+      .select("*, cases(case_key, display_name, active)")
+      .gte("occurred_at", bounds.from.toISOString())
+      .lt("occurred_at", new Date(bounds.to.getTime() + 1).toISOString())
+      .order("occurred_at", { ascending: false })
+      .limit(50);
+    if (filters.caseIds.length) q = q.in("case_id", filters.caseIds);
+    if (filters.eventTypes.length) q = q.in("event_type", filters.eventTypes);
+    if (filters.deliveryContexts.length) q = q.in("delivery_context", filters.deliveryContexts);
+    if (filters.deviceTypes.length) q = q.in("device_type", filters.deviceTypes);
+    const recentRes = await q;
+    if (recentRes.error) {
+      setRecent([]);
+      return;
+    }
+    let rows = (recentRes.data ?? []) as CaseEventRecord[];
+    if (!filters.includeNonProduction) {
+      rows = rows.filter((r) => (r.metadata?.environment ?? "production") === "production");
+    }
+    if (filters.search.trim()) {
+      const s = filters.search.trim().toLowerCase();
+      rows = rows.filter((r) => {
+        const name = r.cases?.display_name ?? "";
+        const key = r.cases?.case_key ?? "";
+        return (
+          name.toLowerCase().includes(s) ||
+          key.toLowerCase().includes(s) ||
+          r.session_id.toLowerCase().includes(s)
+        );
+      });
+    }
+    setRecent(rows);
   }, [bounds.from, bounds.to, filters]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useLiveReload(load);
 
   const kpis = metrics.kpis;
   const completionRate =
