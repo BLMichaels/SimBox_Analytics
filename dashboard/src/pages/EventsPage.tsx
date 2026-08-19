@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FilterBar } from "../components/FilterBar";
-import { DataTable, type Column } from "../components/DataTable";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DataTable, type Column } from "../components/DataTable";
+import { FilterBar } from "../components/FilterBar";
+import { SessionLink } from "../components/SessionLink";
 import { downloadCsv, rangeStamp } from "../lib/csv";
-import { formatDuration, formatLocal, rangeForPreset, shortSession } from "../lib/dates";
+import { formatDuration, formatLocal, rangeForPreset } from "../lib/dates";
+import { applyClientFilters, fetchCaseEvents } from "../lib/fetchEvents";
+import { dash, eventCsvRow, eventLabel, metaString, stepLine } from "../lib/reporting";
 import { supabase } from "../lib/supabase";
 import { useLiveReload } from "../lib/useLiveReload";
 import type { CaseEventRecord, CaseRecord, Filters } from "../lib/types";
-
-const PAGE_CHUNK = 1000;
 
 export function EventsPage() {
   const [cases, setCases] = useState<CaseRecord[]>([]);
@@ -47,44 +48,22 @@ export function EventsPage() {
 
   const load = useCallback(async () => {
     setError(null);
-    const collected: CaseEventRecord[] = [];
-    for (let from = 0; from < 5000; from += PAGE_CHUNK) {
-      let q = supabase
-        .from("case_events")
-        .select("*, cases(case_key, display_name, active)")
-        .gte("occurred_at", bounds.from.toISOString())
-        .lt("occurred_at", new Date(bounds.to.getTime() + 1).toISOString())
-        .order("occurred_at", { ascending: false })
-        .range(from, from + PAGE_CHUNK - 1);
-      if (filters.caseIds.length) q = q.in("case_id", filters.caseIds);
-      if (filters.eventTypes.length) q = q.in("event_type", filters.eventTypes);
-      if (filters.deliveryContexts.length) q = q.in("delivery_context", filters.deliveryContexts);
-      if (filters.deviceTypes.length) q = q.in("device_type", filters.deviceTypes);
-      const { data, error: err } = await q;
-      if (err) {
-        setError("Unable to load events.");
-        return;
-      }
-      const batch = (data ?? []) as CaseEventRecord[];
-      collected.push(...batch);
-      if (batch.length < PAGE_CHUNK) break;
+    const fetched = await fetchCaseEvents({
+      from: bounds.from,
+      to: bounds.to,
+      caseIds: filters.caseIds,
+      eventTypes: filters.eventTypes,
+      deliveryContexts: filters.deliveryContexts,
+      deviceTypes: filters.deviceTypes,
+    });
+    if (fetched.error) {
+      setError(fetched.error);
+      return;
     }
-    let next = collected;
-    if (!filters.includeNonProduction) {
-      next = next.filter((r) => (r.metadata?.environment ?? "production") === "production");
-    }
-    if (filters.search.trim()) {
-      const s = filters.search.trim().toLowerCase();
-      next = next.filter((r) => {
-        const name = r.cases?.display_name ?? "";
-        const key = r.cases?.case_key ?? "";
-        return (
-          name.toLowerCase().includes(s) ||
-          key.toLowerCase().includes(s) ||
-          r.session_id.toLowerCase().includes(s)
-        );
-      });
-    }
+    const next = applyClientFilters(fetched.rows, {
+      includeNonProduction: filters.includeNonProduction,
+      search: filters.search,
+    });
     setRows(next);
     setSelectedIds((prev) => {
       const keep = new Set<string>();
@@ -104,33 +83,31 @@ export function EventsPage() {
 
   const columns: Column<CaseEventRecord>[] = [
     { key: "local", header: "Local date/time", sortValue: (r) => r.occurred_at, render: (r) => formatLocal(r.occurred_at) },
-    { key: "utc", header: "UTC", sortValue: (r) => r.occurred_at, render: (r) => r.occurred_at },
-    { key: "case", header: "Case", sortValue: (r) => r.cases?.display_name ?? "", render: (r) => r.cases?.display_name ?? "—" },
-    { key: "key", header: "Case key", sortValue: (r) => r.cases?.case_key ?? "", render: (r) => <span className="font-mono text-xs">{r.cases?.case_key}</span> },
-    { key: "event", header: "Event", sortValue: (r) => r.event_type, render: (r) => r.event_type.replace("case_", "") },
     {
-      key: "step",
-      header: "Step",
-      sortValue: (r) => Number(r.metadata?.step ?? -1),
-      render: (r) => {
-        const title = r.metadata?.slideTitle || r.metadata?.lastSlide;
-        const step = r.metadata?.step ?? r.metadata?.lastStep;
-        if (title) return String(title);
-        if (step != null) return `Step ${String(step)}`;
-        return "—";
-      },
+      key: "case",
+      header: "Case",
+      sortValue: (r) => r.cases?.display_name ?? "",
+      render: (r) => r.cases?.display_name ?? "—",
     },
+    { key: "event", header: "Action", sortValue: (r) => r.event_type, render: (r) => eventLabel(r.event_type) },
+    { key: "step", header: "Step", sortValue: (r) => stepLine(r), render: (r) => stepLine(r) },
     {
       key: "session",
       header: "Session",
       sortValue: (r) => r.session_id,
-      render: (r) => (
-        <span className="font-mono text-xs" title={r.session_id}>
-          {shortSession(r.session_id)}
-        </span>
-      ),
+      render: (r) => <SessionLink sessionId={r.session_id} />,
     },
-    { key: "elapsed", header: "Elapsed", sortValue: (r) => r.elapsed_seconds ?? -1, render: (r) => formatDuration(r.elapsed_seconds) },
+    {
+      key: "elapsed",
+      header: "Elapsed",
+      sortValue: (r) => r.elapsed_seconds ?? -1,
+      render: (r) => formatDuration(r.elapsed_seconds),
+    },
+    { key: "city", header: "City", sortValue: (r) => metaString(r, "city"), render: (r) => dash(metaString(r, "city")) },
+    { key: "region", header: "State / region", sortValue: (r) => metaString(r, "region"), render: (r) => dash(metaString(r, "region")) },
+    { key: "postal", header: "Postal", sortValue: (r) => metaString(r, "postal"), render: (r) => dash(metaString(r, "postal")) },
+    { key: "country", header: "Country", sortValue: (r) => metaString(r, "country"), render: (r) => dash(metaString(r, "country")) },
+    { key: "site", header: "Site", sortValue: (r) => metaString(r, "siteKey"), render: (r) => dash(metaString(r, "siteKey")) },
     {
       key: "access",
       header: "Access",
@@ -139,11 +116,10 @@ export function EventsPage() {
         r.delivery_context === "wix_embedded"
           ? "Wix embed"
           : r.delivery_context === "github_direct"
-            ? "GitHub direct"
+            ? "GitHub Pages"
             : r.delivery_context ?? "—",
     },
     { key: "device", header: "Device", sortValue: (r) => r.device_type ?? "", render: (r) => r.device_type ?? "—" },
-    { key: "env", header: "Env", sortValue: (r) => String(r.metadata?.environment ?? "production"), render: (r) => String(r.metadata?.environment ?? "production") },
   ];
 
   const testIds = rows
@@ -192,22 +168,7 @@ export function EventsPage() {
   }
 
   function exportCsv() {
-    downloadCsv(
-      `simbox-events-${rangeStamp(bounds.from, bounds.to)}.csv`,
-      rows.map((r) => ({
-        local_timestamp: formatLocal(r.occurred_at),
-        utc_timestamp: r.occurred_at,
-        case_name: r.cases?.display_name ?? "",
-        case_key: r.cases?.case_key ?? "",
-        event: r.event_type,
-        session_id: r.session_id,
-        event_key: r.event_key,
-        elapsed_seconds: r.elapsed_seconds,
-        access_context: r.delivery_context,
-        device: r.device_type,
-        environment: String(r.metadata?.environment ?? "production"),
-      })),
-    );
+    downloadCsv(`simbox-events-${rangeStamp(bounds.from, bounds.to)}.csv`, rows.map((r) => eventCsvRow(r)));
   }
 
   return (
@@ -216,7 +177,7 @@ export function EventsPage() {
         <div>
           <h1 className="font-serif text-3xl text-ink">Event log</h1>
           <p className="mt-1 text-sm text-ink-soft">
-            Live anonymous starts, completions, and exits. This list refreshes every few seconds.
+            Raw anonymous actions. Click a session ID to open the dossier.
             {rows.length ? ` ${rows.length} event${rows.length === 1 ? "" : "s"} in this range.` : ""}
           </p>
         </div>
@@ -279,6 +240,7 @@ export function EventsPage() {
         rows={rows}
         rowKey={(r) => r.id}
         pageSize={25}
+        compact
         selectedIds={selectedIds}
         onSelectedIdsChange={setSelectedIds}
         emptyTitle="No events match these filters"

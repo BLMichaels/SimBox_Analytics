@@ -12,7 +12,7 @@ export function LoginPage() {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
 
   if (!loading && session) {
-    return <Navigate to="/events" replace />;
+    return <Navigate to="/dashboard" replace />;
   }
 
   async function onSubmit(e: FormEvent) {

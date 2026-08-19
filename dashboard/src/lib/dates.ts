@@ -50,6 +50,28 @@ export function formatLocal(iso: string): string {
   }).format(d);
 }
 
+export function formatLocalPrecise(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(d);
+}
+
+export function formatRange(from: Date, to: Date): string {
+  const fmt = new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+  });
+  return `${fmt.format(from)} – ${fmt.format(to)}`;
+}
+
 export function formatDuration(seconds: number | null | undefined): string {
   if (seconds == null || Number.isNaN(seconds)) return "—";
   const s = Math.round(seconds);

@@ -192,6 +192,10 @@ export function CasesPage() {
             </div>
           </form>
           <h3 className="mt-6 text-sm font-medium">GitHub repository configuration</h3>
+          <p className="mt-2 text-xs leading-5 text-ink-soft">
+            Optional site code: append <code className="font-mono">?simbox_site=HOSP01</code> to the case URL
+            (letters, numbers, underscore, hyphen). The player does not know hospital name or user identity.
+          </p>
           <pre className="mt-2 overflow-x-auto bg-ink p-3 text-xs text-card">
             <code>{snippet}</code>
           </pre>

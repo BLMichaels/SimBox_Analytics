@@ -1,13 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FilterBar } from "../components/FilterBar";
-import { KpiCard } from "../components/KpiCard";
+import { CountTable } from "../components/CountTable";
 import { DashboardCharts } from "../components/DashboardCharts";
 import { DataTable, type Column } from "../components/DataTable";
+import { FilterBar } from "../components/FilterBar";
+import { SessionLink } from "../components/SessionLink";
+import { StudyLedger } from "../components/StudyLedger";
 import { downloadCsv, rangeStamp } from "../lib/csv";
-import { formatDuration, formatLocal, formatPercent, rangeForPreset, shortSession } from "../lib/dates";
+import { formatDuration, formatLocal, formatPercent, formatRange, rangeForPreset } from "../lib/dates";
+import { applyClientFilters, fetchCaseEvents } from "../lib/fetchEvents";
+import {
+  dash,
+  eventCsvRow,
+  outcomeLabel,
+  sessionCsvRow,
+  summarizeSessions,
+  tally,
+  type SessionSummary,
+} from "../lib/reporting";
 import { supabase } from "../lib/supabase";
 import { useLiveReload } from "../lib/useLiveReload";
-import type { CaseEventRecord, CaseRecord, DashboardMetrics, Filters } from "../lib/types";
+import type { CaseRecord, DashboardMetrics, Filters } from "../lib/types";
 
 function emptyMetrics(): DashboardMetrics {
   return {
@@ -31,7 +43,7 @@ function emptyMetrics(): DashboardMetrics {
 export function DashboardPage() {
   const [cases, setCases] = useState<CaseRecord[]>([]);
   const [metrics, setMetrics] = useState<DashboardMetrics>(emptyMetrics());
-  const [recent, setRecent] = useState<CaseEventRecord[]>([]);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState<Filters>(() => {
     const { from, to } = rangeForPreset("last30");
@@ -78,43 +90,28 @@ export function DashboardPage() {
     if (err || !data) {
       setError("Unable to load metrics for this range.");
       setMetrics(emptyMetrics());
-      return;
+    } else {
+      setMetrics(data as DashboardMetrics);
     }
-    setMetrics(data as DashboardMetrics);
 
-    let q = supabase
-      .from("case_events")
-      .select("*, cases(case_key, display_name, active)")
-      .gte("occurred_at", bounds.from.toISOString())
-      .lt("occurred_at", new Date(bounds.to.getTime() + 1).toISOString())
-      .order("occurred_at", { ascending: false })
-      .limit(50);
-    if (filters.caseIds.length) q = q.in("case_id", filters.caseIds);
-    if (filters.eventTypes.length) q = q.in("event_type", filters.eventTypes);
-    if (filters.deliveryContexts.length) q = q.in("delivery_context", filters.deliveryContexts);
-    if (filters.deviceTypes.length) q = q.in("device_type", filters.deviceTypes);
-    const recentRes = await q;
-    if (recentRes.error) {
-      setRecent([]);
+    const fetched = await fetchCaseEvents({
+      from: bounds.from,
+      to: bounds.to,
+      caseIds: filters.caseIds,
+      eventTypes: filters.eventTypes,
+      deliveryContexts: filters.deliveryContexts,
+      deviceTypes: filters.deviceTypes,
+    });
+    if (fetched.error) {
+      setError(fetched.error);
+      setSessions([]);
       return;
     }
-    let rows = (recentRes.data ?? []) as CaseEventRecord[];
-    if (!filters.includeNonProduction) {
-      rows = rows.filter((r) => (r.metadata?.environment ?? "production") === "production");
-    }
-    if (filters.search.trim()) {
-      const s = filters.search.trim().toLowerCase();
-      rows = rows.filter((r) => {
-        const name = r.cases?.display_name ?? "";
-        const key = r.cases?.case_key ?? "";
-        return (
-          name.toLowerCase().includes(s) ||
-          key.toLowerCase().includes(s) ||
-          r.session_id.toLowerCase().includes(s)
-        );
-      });
-    }
-    setRecent(rows);
+    const rows = applyClientFilters(fetched.rows, {
+      includeNonProduction: filters.includeNonProduction,
+      search: filters.search,
+    });
+    setSessions(summarizeSessions(rows));
   }, [bounds.from, bounds.to, filters]);
 
   useEffect(() => {
@@ -126,124 +123,194 @@ export function DashboardPage() {
   const kpis = metrics.kpis;
   const completionRate =
     !kpis.starts || kpis.starts === 0 ? 0 : Number(kpis.completions) / Number(kpis.starts);
+  const completedSessions = sessions.filter((s) => s.outcome === "completed").length;
+  const exitedSessions = sessions.filter((s) => s.outcome === "exited").length;
+  const inProgress = sessions.filter((s) => s.outcome === "in_progress").length;
 
-  const columns: Column<CaseEventRecord>[] = [
-    {
-      key: "occurred_at",
-      header: "Local date/time",
-      sortValue: (r) => r.occurred_at,
-      render: (r) => formatLocal(r.occurred_at),
-    },
-    {
-      key: "case",
-      header: "Case",
-      sortValue: (r) => r.cases?.display_name ?? "",
-      render: (r) => r.cases?.display_name ?? "—",
-    },
-    {
-      key: "event",
-      header: "Event",
-      sortValue: (r) => r.event_type,
-      render: (r) => r.event_type.replace("case_", ""),
-    },
+  const byGeo = tally(sessions, (s) => s.location);
+  const byRegion = tally(sessions, (s) => [s.region, s.country].filter(Boolean).join(", "));
+  const bySite = tally(sessions, (s) => (s.site === "Not provided" ? "" : s.site), "Not provided");
+  const byAccess = tally(sessions, (s) => s.access, "Unknown");
+  const byDevice = tally(sessions, (s) => s.device, "unknown");
+  const byCase = (metrics.by_case ?? []).map((c) => ({
+    label: c.display_name,
+    n: Number(c.starts),
+    pct: Number(c.completion_rate),
+  }));
+  const byStep = (metrics.by_step ?? []).map((s) => ({
+    label: s.label,
+    n: Number(s.sessions),
+    pct: kpis.starts ? Number(s.sessions) / Number(kpis.starts) : 0,
+  }));
+
+  const columns: Column<SessionSummary>[] = [
     {
       key: "session",
       header: "Session",
       sortValue: (r) => r.session_id,
-      render: (r) => (
-        <span className="font-mono text-xs" title={r.session_id}>
-          {shortSession(r.session_id)}
-        </span>
-      ),
+      render: (r) => <SessionLink sessionId={r.session_id} />,
+    },
+    { key: "case", header: "Case", sortValue: (r) => r.case_name, render: (r) => r.case_name },
+    {
+      key: "started",
+      header: "Started",
+      sortValue: (r) => r.started_at,
+      render: (r) => formatLocal(r.started_at),
+    },
+    {
+      key: "outcome",
+      header: "Outcome",
+      sortValue: (r) => r.outcome,
+      render: (r) => outcomeLabel(r.outcome),
     },
     {
       key: "elapsed",
-      header: "Elapsed",
+      header: "Duration",
       sortValue: (r) => r.elapsed_seconds ?? -1,
       render: (r) => formatDuration(r.elapsed_seconds),
     },
+    { key: "step", header: "Last step", sortValue: (r) => r.last_step, render: (r) => r.last_step },
+    { key: "city", header: "City", sortValue: (r) => r.city, render: (r) => dash(r.city) },
+    { key: "region", header: "State / region", sortValue: (r) => r.region, render: (r) => dash(r.region) },
+    { key: "postal", header: "Postal", sortValue: (r) => r.postal, render: (r) => dash(r.postal) },
+    { key: "country", header: "Country", sortValue: (r) => r.country, render: (r) => dash(r.country) },
+    { key: "site", header: "Site", sortValue: (r) => r.site, render: (r) => r.site },
+    { key: "access", header: "Access", sortValue: (r) => r.access, render: (r) => r.access },
+    { key: "device", header: "Device", sortValue: (r) => r.device, render: (r) => r.device },
     {
-      key: "delivery",
-      header: "Access",
-      sortValue: (r) => r.delivery_context ?? "",
-      render: (r) =>
-        r.delivery_context === "wix_embedded"
-          ? "Wix embed"
-          : r.delivery_context === "github_direct"
-            ? "GitHub direct"
-            : r.delivery_context ?? "—",
-    },
-    {
-      key: "device",
-      header: "Device",
-      sortValue: (r) => r.device_type ?? "",
-      render: (r) => r.device_type ?? "—",
+      key: "events",
+      header: "Actions",
+      sortValue: (r) => r.event_count,
+      render: (r) => String(r.event_count),
     },
   ];
 
-  function exportCsv() {
-    downloadCsv(`simbox-overview-${rangeStamp(bounds.from, bounds.to)}.csv`, recent.map(toCsvRow));
+  function exportSessions() {
+    downloadCsv(`simbox-sessions-${rangeStamp(bounds.from, bounds.to)}.csv`, sessions.map(sessionCsvRow));
+  }
+
+  function exportEvents() {
+    downloadCsv(
+      `simbox-events-${rangeStamp(bounds.from, bounds.to)}.csv`,
+      sessions.flatMap((s) => s.events.map((e) => eventCsvRow(e))),
+    );
   }
 
   return (
     <div>
-      <header className="mb-6">
-        <h1 className="font-serif text-3xl text-ink">Overview</h1>
-        <p className="mt-1 text-sm text-ink-soft">Anonymous aggregate use of SimBox cases. Times display in your local timezone; the database stores UTC.</p>
+      <header className="mb-6 border-b border-ink pb-5">
+        <p className="text-[11px] font-medium tracking-[0.18em] text-teal uppercase">Study extract</p>
+        <h1 className="font-serif mt-1 text-3xl text-ink">Overview</h1>
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-soft">
+          Anonymous SimBox usage for {formatRange(bounds.from, bounds.to)}. Counts are session-based.
+          Times display in your local timezone; stored timestamps are UTC. Click a session ID for the
+          full action progression.
+        </p>
       </header>
-      <FilterBar
-        cases={cases}
-        filters={filters}
-        onChange={setFilters}
-        showEventFilter
-        showSearch
-      />
+      <FilterBar cases={cases} filters={filters} onChange={setFilters} showEventFilter showSearch compact />
       {error ? (
         <p role="alert" className="mb-4 text-sm text-danger">
           {error}
         </p>
       ) : null}
-      <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        <KpiCard label="Starts" value={String(kpis.starts ?? 0)} />
-        <KpiCard label="Completions" value={String(kpis.completions ?? 0)} />
-        <KpiCard label="Completion rate" value={formatPercent(completionRate)} hint="Completions ÷ starts" />
-        <KpiCard label="Unique anonymous sessions" value={String(kpis.unique_sessions ?? 0)} />
-        <KpiCard
-          label="Median completion duration"
-          value={formatDuration(kpis.median_completion_seconds)}
+
+      <StudyLedger
+        items={[
+          { label: "Starts", value: String(kpis.starts ?? 0), hint: "case_started events" },
+          { label: "Completions", value: String(kpis.completions ?? 0), hint: "Last numbered step reached" },
+          { label: "Completion rate", value: formatPercent(completionRate), hint: "Completions ÷ starts" },
+          { label: "Exits", value: String(kpis.exits ?? 0), hint: "Left before completion" },
+          { label: "Sessions", value: String(kpis.unique_sessions ?? sessions.length), hint: "Anonymous session IDs" },
+          {
+            label: "Median duration",
+            value: formatDuration(kpis.median_completion_seconds),
+            hint: "Among completions",
+          },
+          {
+            label: "Mean duration",
+            value: formatDuration(kpis.avg_completion_seconds),
+            hint: "Among completions",
+          },
+          { label: "Active cases", value: String(kpis.active_cases ?? 0), hint: "With ≥1 start in range" },
+        ]}
+      />
+
+      <p className="mt-2 mb-6 text-[11px] text-ink-soft">
+        Session outcomes in this extract: {completedSessions} completed, {exitedSessions} exited, {inProgress} in
+        progress. Named user and hospital are not collected from the player. Site code appears only when the
+        case URL includes <code className="font-mono">?simbox_site=</code>.
+      </p>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <CountTable
+          title="By case"
+          caption="Completion rate is completions ÷ starts for that case."
+          rows={byCase}
+          nLabel="Starts"
+          percentLabel="Completion rate"
+          empty="No case activity in this range."
         />
-        <KpiCard label="Active cases in period" value={String(kpis.active_cases ?? 0)} />
+        <CountTable
+          title="By locality"
+          caption="City, region, postal, country from network lookup at ingest. Historical events may show Not resolved."
+          rows={byGeo}
+          empty="No session locality in this range."
+        />
+        <CountTable
+          title="By state / country"
+          rows={byRegion}
+          empty="No region data in this range."
+        />
+        <CountTable
+          title="By site code"
+          caption="Optional hospital or program code from the case URL. Not a named institution."
+          rows={bySite}
+          empty="No site codes in this range."
+        />
+        <CountTable title="By access" rows={byAccess} empty="No access mix in this range." />
+        <CountTable title="By device" rows={byDevice} empty="No device mix in this range." />
       </div>
-      <DashboardCharts metrics={metrics} />
+
+      <div className="mt-4">
+        <CountTable
+          title="Sessions reaching each step"
+          caption="% of starts in this range. Dual last steps (for example BSSA / SAFE-T) both count as completion."
+          rows={byStep}
+          empty="No step checkpoints in this range. Older events may predate step tracking."
+        />
+      </div>
+
+      <div className="mt-4">
+        <DashboardCharts metrics={metrics} />
+      </div>
+
       <section className="mt-8">
-        <div className="mb-3 flex items-end justify-between gap-3">
-          <h2 className="font-serif text-2xl text-ink">Recent activity</h2>
-          <button type="button" className="border border-line bg-card px-3 py-1.5 text-sm" onClick={exportCsv}>
-            Export CSV
-          </button>
+        <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="font-serif text-2xl text-ink">Sessions</h2>
+            <p className="mt-1 text-sm text-ink-soft">
+              One row per anonymous session. Open a session to read every action as a progression.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="border border-line bg-card px-3 py-1.5 text-sm" onClick={exportEvents}>
+              Export event log
+            </button>
+            <button type="button" className="bg-ink px-3 py-1.5 text-sm text-card" onClick={exportSessions}>
+              Export session table
+            </button>
+          </div>
         </div>
         <DataTable
           columns={columns}
-          rows={recent}
-          rowKey={(r) => r.id}
-          emptyTitle="No activity in this range"
-          emptyBody="Adjust the date range or filters, or confirm tracking is reaching the intake function."
+          rows={sessions}
+          rowKey={(r) => r.session_id}
+          pageSize={20}
+          compact
+          emptyTitle="No sessions in this range"
+          emptyBody="Adjust the study period or filters, or confirm tracking is reaching the intake function."
         />
       </section>
     </div>
   );
-}
-
-function toCsvRow(r: CaseEventRecord): Record<string, string | number | null> {
-  return {
-    local_timestamp: formatLocal(r.occurred_at),
-    utc_timestamp: r.occurred_at,
-    case_name: r.cases?.display_name ?? "",
-    case_key: r.cases?.case_key ?? "",
-    event: r.event_type,
-    session_id: r.session_id,
-    elapsed_seconds: r.elapsed_seconds,
-    access_context: r.delivery_context,
-    device: r.device_type,
-  };
 }

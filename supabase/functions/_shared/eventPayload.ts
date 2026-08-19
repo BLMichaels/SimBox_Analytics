@@ -36,7 +36,7 @@ export const MAX_CASE_KEY = 80;
 export const MAX_APP_VERSION = 32;
 export const MIN_ELAPSED = 0;
 export const MAX_ELAPSED_SECONDS = 43_200; // 12 hours
-export const MAX_METADATA_KEYS = 16;
+export const MAX_METADATA_KEYS = 24;
 export const MAX_METADATA_STRING = 64;
 
 export type SimBoxEventPayload = {

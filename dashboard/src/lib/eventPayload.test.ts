@@ -69,4 +69,10 @@ describe("validateEventPayload", () => {
     const result = validateEventPayload(payload, JSON.stringify(payload).length);
     expect(result.ok).toBe(true);
   });
+
+  it("accepts a site code in metadata", () => {
+    const payload = { ...base(), metadata: { environment: "production", siteKey: "HOSP01" } };
+    const result = validateEventPayload(payload, JSON.stringify(payload).length);
+    expect(result.ok).toBe(true);
+  });
 });

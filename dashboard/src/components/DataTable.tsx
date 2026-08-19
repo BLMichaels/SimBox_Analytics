@@ -16,6 +16,8 @@ type Props<T> = {
   emptyBody: string;
   selectedIds?: Set<string>;
   onSelectedIdsChange?: (next: Set<string>) => void;
+  compact?: boolean;
+  defaultDir?: "asc" | "desc";
 };
 
 export function DataTable<T>({
@@ -27,9 +29,11 @@ export function DataTable<T>({
   emptyBody,
   selectedIds,
   onSelectedIdsChange,
+  compact,
+  defaultDir = "desc",
 }: Props<T>) {
   const [sortKey, setSortKey] = useState(columns[0]?.key ?? "");
-  const [dir, setDir] = useState<"asc" | "desc">("desc");
+  const [dir, setDir] = useState<"asc" | "desc">(defaultDir);
   const [page, setPage] = useState(0);
 
   const sorted = useMemo(() => {
@@ -94,7 +98,7 @@ export function DataTable<T>({
   return (
     <div>
       <div className="overflow-x-auto border border-line">
-        <table className="min-w-full border-collapse text-left text-sm">
+        <table className={["min-w-full border-collapse text-left", compact ? "text-xs" : "text-sm"].join(" ")}>
           <thead className="bg-paper-2">
             <tr>
               {selectable ? (

@@ -55,6 +55,26 @@ export function HelpPage() {
         </li>
       </ol>
 
+      <h2 className="font-serif mt-10 text-2xl text-ink">Study fields: location, hospital, user</h2>
+      <p className="mt-2 text-sm leading-6 text-ink-soft">
+        Storyline on GitHub Pages cannot see a named user, hospital, or mailing address. For academic extracts we store what can be resolved honestly:
+      </p>
+      <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6">
+        <li>
+          <strong>City, state/region, postal/ZIP, country, timezone</strong> are looked up from the request network at ingest. The raw IP is not stored.
+        </li>
+        <li>
+          <strong>Site code</strong> (hospital or program identifier you assign) is recorded when the case URL includes{" "}
+          <code className="font-mono">?simbox_site=HOSP01</code>. Only letters, numbers, underscore, and hyphen are accepted. This is not a hospital name.
+        </li>
+        <li>
+          <strong>User identity and hospital name</strong> are not collected. The session ID is an anonymous random value in the browser tab.
+        </li>
+      </ul>
+      <p className="mt-3 text-sm leading-6 text-ink-soft">
+        Events recorded before locality lookup was enabled will show “Not resolved” until new sessions arrive.
+      </p>
+
       <h2 className="font-serif mt-10 text-2xl text-ink">Troubleshooting</h2>
       <dl className="mt-4 space-y-4 text-sm">
         <div>

@@ -84,6 +84,50 @@ function json(
   });
 }
 
+function clipMeta(value: string, max = 64): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+function clientIp(req: Request): string | null {
+  const cf = req.headers.get("cf-connecting-ip") ?? req.headers.get("true-client-ip");
+  if (cf) return cf.trim();
+  const forwarded = req.headers.get("x-forwarded-for");
+  if (forwarded) return forwarded.split(",")[0]?.trim() || null;
+  return null;
+}
+
+async function lookupNetworkLocality(req: Request): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  const countryHeader = req.headers.get("cf-ipcountry");
+  if (countryHeader && countryHeader !== "XX" && countryHeader !== "T1") {
+    out.country = clipMeta(countryHeader, 8);
+  }
+  const ip = clientIp(req);
+  if (!ip) return out;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 850);
+    const res = await fetch(`https://ipapi.co/${encodeURIComponent(ip)}/json/`, {
+      signal: ctrl.signal,
+      headers: { Accept: "application/json" },
+    });
+    clearTimeout(timer);
+    if (!res.ok) return out;
+    const body = (await res.json()) as Record<string, unknown>;
+    if (body.error) return out;
+    if (typeof body.city === "string" && body.city) out.city = clipMeta(body.city);
+    if (typeof body.region === "string" && body.region) out.region = clipMeta(body.region);
+    if (typeof body.country_name === "string" && body.country_name) {
+      out.country = clipMeta(body.country_name);
+    }
+    if (typeof body.postal === "string" && body.postal) out.postal = clipMeta(body.postal, 12);
+    if (typeof body.timezone === "string" && body.timezone) out.timezone = clipMeta(body.timezone, 40);
+  } catch {
+    /* ingest must not fail if geo lookup is slow or blocked */
+  }
+  return out;
+}
+
 Deno.serve(async (req: Request): Promise<Response> => {
   const allowed = parseAllowedOrigins();
   const requestOrigin = req.headers.get("origin");
@@ -138,6 +182,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   const payload = validated.value;
+  const geo = await lookupNetworkLocality(req);
+  const clientMeta = { ...payload.metadata };
+  for (const key of ["city", "region", "country", "postal", "timezone", "latitude", "longitude"]) {
+    delete clientMeta[key];
+  }
+  const metadata = {
+    ...clientMeta,
+    ...geo,
+  };
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceKey) {
@@ -174,7 +227,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     delivery_context: payload.delivery_context,
     device_type: payload.device_type,
     app_version: payload.app_version,
-    metadata: payload.metadata,
+    metadata,
   });
 
   if (insertError) {

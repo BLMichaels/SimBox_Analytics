@@ -1,15 +1,16 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 
 const links = [
-  { to: "/events", label: "Events" },
   { to: "/dashboard", label: "Overview" },
+  { to: "/events", label: "Events" },
   { to: "/cases", label: "Cases" },
   { to: "/help", label: "Help" },
 ];
 
 export function AppShell() {
   const { adminName, user, signOut } = useAuth();
+  const location = useLocation();
 
   return (
     <div className="min-h-svh bg-paper text-ink">
@@ -24,7 +25,7 @@ export function AppShell() {
           <div className="px-5 py-5">
             <p className="font-serif text-xl font-semibold tracking-tight text-card">SimBox</p>
             <p className="mt-1 text-xs uppercase tracking-[0.14em] text-paper-2">
-              Usage analytics
+              Study analytics
             </p>
           </div>
           <nav aria-label="Primary" className="flex gap-1 overflow-x-auto px-3 pb-3 lg:flex-col lg:px-3">
@@ -32,14 +33,15 @@ export function AppShell() {
               <NavLink
                 key={link.to}
                 to={link.to}
-                className={({ isActive }) =>
-                  [
+                className={({ isActive }) => {
+                  const related = link.to === "/dashboard" && location.pathname.startsWith("/sessions");
+                  return [
                     "rounded-sm px-3 py-2 text-sm whitespace-nowrap",
-                    isActive
+                    isActive || related
                       ? "bg-teal text-card"
                       : "text-paper-2 hover:bg-ink-soft hover:text-card",
-                  ].join(" ")
-                }
+                  ].join(" ");
+                }}
               >
                 {link.label}
               </NavLink>
