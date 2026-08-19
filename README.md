@@ -2,7 +2,7 @@
 
 Anonymous, aggregate usage analytics for SimBox Articulate Storyline cases hosted on GitHub Pages and embedded on Wix.
 
-This repository is the **analytics platform** (database, intake function, admin dashboard, reusable tracking adapter). It does **not** replace Storyline packages. The reference case [SimBox_Penetrating_Trauma](https://github.com/BLMichaels/SimBox_Penetrating_Trauma) was audited first; see `docs/reference-case-audit.md`.
+The dashboard is hosted at **https://simbox-analytics.vercel.app** and uses the `SimBox_Analytics` Supabase project (`ututhxkwvhpnoyrfjzbu`).
 
 ## Privacy
 
