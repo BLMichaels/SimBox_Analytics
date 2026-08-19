@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { canonicalCountry, canonicalState, countyKey, isUnitedStates, pointInCoords } from "./geo";
-import { bucketLocations, sessionsForMetric, type LocationBucket } from "./mapData";
+import { bucketLocations, bucketsForScope, sessionsForMetric, volumeColor, type LocationBucket } from "./mapData";
 import type { SessionSummary } from "./reporting";
 
 describe("geo names", () => {
@@ -45,5 +45,15 @@ describe("map buckets", () => {
     expect(buckets[0]?.starts).toBe(2);
     expect(buckets[0]?.completions).toBe(1);
     expect(buckets[0]?.cases.SimBox_Asthma?.completions).toBe(1);
+  });
+
+  it("filters to United States buckets and colors higher counts more vividly", () => {
+    const mixed = [
+      { country: "United States", starts: 1, completions: 0 },
+      { country: "Canada", starts: 4, completions: 1 },
+    ] as LocationBucket[];
+    expect(bucketsForScope(mixed, "usa")).toHaveLength(1);
+    expect(volumeColor(1)).not.toBe(volumeColor(8));
+    expect(volumeColor(8)).toBe("#9a4f2c");
   });
 });

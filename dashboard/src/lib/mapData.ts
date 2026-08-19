@@ -11,6 +11,75 @@ export type MapMetric = "started" | "completed";
 export type MapLayer = "heatmap" | "bubbles" | "regions";
 export type MapGrain = "country" | "state" | "county";
 export type MapGroup = "overall" | "case";
+export type MapScope = "world" | "usa";
+export type UsaLevel = "state" | "county" | "location";
+
+export function bucketsForScope(buckets: LocationBucket[], scope: MapScope): LocationBucket[] {
+  if (scope !== "usa") return buckets;
+  return buckets.filter((b) => isUnitedStates(b.country));
+}
+
+export function bucketValue(bucket: LocationBucket, metric: MapMetric): number {
+  return metric === "completed" ? bucket.completions : bucket.starts;
+}
+
+/** Absolute volume ramp so 1 vs 2 vs 5 sessions is visible even with sparse data. */
+const VOLUME_STOPS: Array<[number, string]> = [
+  [1, "#8fbfba"],
+  [2, "#1f6a66"],
+  [4, "#c4a35a"],
+  [8, "#9a4f2c"],
+  [16, "#8f2d2d"],
+];
+
+function hexToRgb(hex: string): [number, number, number] {
+  const n = hex.replace("#", "");
+  return [Number.parseInt(n.slice(0, 2), 16), Number.parseInt(n.slice(2, 4), 16), Number.parseInt(n.slice(4, 6), 16)];
+}
+
+function rgbToHex(rgb: [number, number, number]): string {
+  return `#${rgb.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("")}`;
+}
+
+export function volumeColor(value: number): string {
+  if (value <= 0) return "#00000000";
+  const stops = VOLUME_STOPS;
+  const first = stops[0];
+  const last = stops[stops.length - 1];
+  if (!first || !last) return "#1f6a66";
+  if (value <= first[0]) return first[1];
+  if (value >= last[0]) return last[1];
+  for (let i = 1; i < stops.length; i++) {
+    const prev = stops[i - 1];
+    const next = stops[i];
+    if (!prev || !next) continue;
+    if (value <= next[0]) {
+      const t = (value - prev[0]) / (next[0] - prev[0]);
+      const a = hexToRgb(prev[1]);
+      const b = hexToRgb(next[1]);
+      return rgbToHex([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]);
+    }
+  }
+  return last[1];
+}
+
+export function volumeWeight(value: number): number {
+  if (value <= 0) return 0;
+  return Math.min(1, 0.45 + Math.log2(value + 1) / 5);
+}
+
+export function volumeRadius(value: number): number {
+  if (value <= 0) return 0;
+  return 8 + Math.min(22, Math.log2(value + 1) * 7);
+}
+
+export const VOLUME_LEGEND = [
+  { label: "1", color: volumeColor(1) },
+  { label: "2", color: volumeColor(2) },
+  { label: "4", color: volumeColor(4) },
+  { label: "8", color: volumeColor(8) },
+  { label: "16+", color: volumeColor(16) },
+];
 
 export type PlacedSession = SessionSummary & {
   lat: number;
@@ -158,26 +227,33 @@ export function bucketLocations(placed: PlacedSession[]): LocationBucket[] {
   return [...map.values()].sort((a, b) => b.starts - a.starts);
 }
 
-export function pointsGeoJSON(buckets: LocationBucket[]): GeoJSON.FeatureCollection {
+export function pointsGeoJSON(buckets: LocationBucket[], metric: MapMetric = "started"): GeoJSON.FeatureCollection {
   return {
     type: "FeatureCollection",
-    features: buckets.map((b) => ({
-      type: "Feature",
-      properties: {
-        key: b.key,
-        label: b.label,
-        starts: b.starts,
-        completions: b.completions,
-        rate: b.starts ? b.completions / b.starts : 0,
-        city: b.city,
-        region: b.region,
-        country: b.country,
-        cases: Object.values(b.cases)
-          .map((c) => `${c.name} (${c.n})`)
-          .join(", "),
-      },
-      geometry: { type: "Point", coordinates: [b.lng, b.lat] },
-    })),
+    features: buckets.map((b) => {
+      const value = bucketValue(b, metric);
+      return {
+        type: "Feature",
+        properties: {
+          key: b.key,
+          label: b.label,
+          starts: b.starts,
+          completions: b.completions,
+          value,
+          weight: volumeWeight(value),
+          radius: volumeRadius(value),
+          color: volumeColor(value),
+          rate: b.starts ? b.completions / b.starts : 0,
+          city: b.city,
+          region: b.region,
+          country: b.country,
+          cases: Object.values(b.cases)
+            .map((c) => `${c.name} (${c.n})`)
+            .join(", "),
+        },
+        geometry: { type: "Point", coordinates: [b.lng, b.lat] },
+      };
+    }),
   };
 }
 

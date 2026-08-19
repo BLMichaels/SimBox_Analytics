@@ -1,11 +1,19 @@
 import { useEffect, useRef } from "react";
 import { LngLatBounds, Map as MapLibreMap, NavigationControl, Popup, ScaleControl } from "maplibre-gl";
-import type { GeoJSONSource, MapLayerMouseEvent, StyleSpecification } from "maplibre-gl";
+import type { GeoJSONSource, LngLatBoundsLike, MapLayerMouseEvent, StyleSpecification } from "maplibre-gl";
 import { feature } from "topojson-client";
 import type { Topology } from "topojson-specification";
-import { canonicalCountry, canonicalState, countyKey, featureContains, inUnitedStatesView, isUnitedStates, normName } from "../lib/geo";
-import type { LocationBucket, MapGrain, MapGroup, MapLayer } from "../lib/mapData";
-import { caseColors, pointsGeoJSON } from "../lib/mapData";
+import {
+  canonicalCountry,
+  canonicalState,
+  countyKey,
+  featureContains,
+  inUnitedStatesView,
+  isUnitedStates,
+  normName,
+} from "../lib/geo";
+import type { LocationBucket, MapGrain, MapGroup, MapLayer, MapMetric, MapScope, UsaLevel } from "../lib/mapData";
+import { caseColors, pointsGeoJSON, volumeColor, volumeRadius, volumeWeight } from "../lib/mapData";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 type Props = {
@@ -13,6 +21,9 @@ type Props = {
   layer: MapLayer;
   group: MapGroup;
   grain: MapGrain;
+  scope: MapScope;
+  usaLevel: UsaLevel;
+  metric: MapMetric;
   onGrainChange: (grain: MapGrain) => void;
 };
 
@@ -29,8 +40,18 @@ const STYLE: StyleSpecification = {
   layers: [{ id: "carto", type: "raster", source: "carto" }],
 };
 
+const US_MAX_BOUNDS: LngLatBoundsLike = [
+  [-179.2, 16.7],
+  [-64.4, 71.6],
+];
+const US_CONUS: LngLatBoundsLike = [
+  [-124.9, 24.4],
+  [-66.7, 49.4],
+];
+
 type Atlas = { countries?: GeoJSON.FeatureCollection; states?: GeoJSON.FeatureCollection; counties?: GeoJSON.FeatureCollection };
 const atlas: Atlas = {};
+const countyHitCache = new Map<string, string>();
 
 async function loadTopo(url: string, objectName: string): Promise<GeoJSON.FeatureCollection> {
   const res = await fetch(url);
@@ -38,21 +59,17 @@ async function loadTopo(url: string, objectName: string): Promise<GeoJSON.Featur
   const topo = (await res.json()) as Topology;
   const obj = topo.objects[objectName];
   if (!obj) return { type: "FeatureCollection", features: [] };
-  const fc = feature(topo, obj) as unknown as GeoJSON.FeatureCollection;
-  return fc;
+  return feature(topo, obj) as unknown as GeoJSON.FeatureCollection;
 }
 
-async function ensureAtlas(grain: MapGrain): Promise<Atlas> {
-  if (!atlas.countries) {
-    atlas.countries = await loadTopo(
-      "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json",
-      "countries",
-    );
+async function ensureAtlas(need: "country" | "state" | "county"): Promise<Atlas> {
+  if (need === "country" && !atlas.countries) {
+    atlas.countries = await loadTopo("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json", "countries");
   }
-  if (grain !== "country" && !atlas.states) {
+  if (need !== "country" && !atlas.states) {
     atlas.states = await loadTopo("https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json", "states");
   }
-  if (grain === "county" && !atlas.counties) {
+  if (need === "county" && !atlas.counties) {
     atlas.counties = await loadTopo("https://cdn.jsdelivr.net/npm/us-atlas@3/counties-10m.json", "counties");
   }
   return atlas;
@@ -63,7 +80,22 @@ function featureName(f: GeoJSON.Feature): string {
   return String(p.name ?? p.NAME ?? p.ADMIN ?? p.geonunit ?? "");
 }
 
-function paintRegions(features: GeoJSON.Feature[], buckets: LocationBucket[], grain: MapGrain): GeoJSON.FeatureCollection {
+function countyIdForPoint(features: GeoJSON.Feature[], lng: number, lat: number): string {
+  const key = `${lng.toFixed(3)},${lat.toFixed(3)}`;
+  const cached = countyHitCache.get(key);
+  if (cached != null) return cached;
+  const hit = features.find((f) => featureContains(f, lng, lat));
+  const id = hit ? String(hit.id ?? featureName(hit)) : "";
+  countyHitCache.set(key, id);
+  return id;
+}
+
+function paintRegions(
+  features: GeoJSON.Feature[],
+  buckets: LocationBucket[],
+  grain: MapGrain,
+  metric: MapMetric,
+): GeoJSON.FeatureCollection {
   const counts = new Map<string, { starts: number; completions: number }>();
   const add = (name: string, b: LocationBucket) => {
     const key = normName(name);
@@ -78,10 +110,9 @@ function paintRegions(features: GeoJSON.Feature[], buckets: LocationBucket[], gr
     if (grain === "country") add(canonicalCountry(b.country), b);
     else if (grain === "state") {
       if (isUnitedStates(b.country) && b.region) add(canonicalState(b.region), b);
-      else add(canonicalCountry(b.country), b);
     } else {
-      const hit = features.find((f) => featureContains(f, b.lng, b.lat));
-      if (hit) add(String(hit.id ?? featureName(hit)), b);
+      const id = countyIdForPoint(features, b.lng, b.lat);
+      if (id) add(id, b);
       else if (b.county) add(countyKey(b.county), b);
     }
   }
@@ -100,14 +131,19 @@ function paintRegions(features: GeoJSON.Feature[], buckets: LocationBucket[], gr
         counts.get(normName(featureName(f))) ??
         counts.get(countyKey(featureName(f))) ??
         counts.get(String(f.id ?? ""));
+      const starts = stat?.starts ?? 0;
+      const completions = stat?.completions ?? 0;
+      const value = metric === "completed" ? completions : starts;
       return {
         ...f,
         properties: {
           ...f.properties,
           label: featureName(f),
-          starts: stat?.starts ?? 0,
-          completions: stat?.completions ?? 0,
-          rate: stat?.starts ? stat.completions / stat.starts : 0,
+          starts,
+          completions,
+          value,
+          color: volumeColor(value),
+          rate: starts ? completions / starts : 0,
         },
       };
     }),
@@ -123,52 +159,41 @@ function addUsageLayers(map: MapLibreMap) {
     type: "fill",
     source: "regions",
     paint: {
-      "fill-color": [
-        "interpolate",
-        ["linear"],
-        ["get", "starts"],
-        0,
-        "rgba(31,106,102,0)",
-        1,
-        "#e8e2d6",
-        4,
-        "#9dccc7",
-        12,
-        "#1f6a66",
-        30,
-        "#164e4b",
-      ],
-      "fill-opacity": 0.78,
+      "fill-color": ["to-color", ["coalesce", ["get", "color"], "#00000000"]],
+      "fill-opacity": 0.82,
     },
   });
   map.addLayer({
     id: "region-line",
     type: "line",
     source: "regions",
-    paint: { "line-color": "#1c2430", "line-width": 0.6, "line-opacity": 0.35 },
+    paint: { "line-color": "#1c2430", "line-width": 0.7, "line-opacity": 0.45 },
   });
   map.addLayer({
     id: "heat",
     type: "heatmap",
     source: "points",
     paint: {
-      "heatmap-weight": ["interpolate", ["linear"], ["get", "starts"], 0, 0, 8, 1],
-      "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 0, 0.6, 6, 1.4],
-      "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 0, 16, 8, 36],
+      "heatmap-weight": ["to-number", ["get", "weight"]],
+      "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 2, 1.6, 5, 2.4, 8, 3.2],
+      "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 2, 22, 6, 34, 10, 48],
+      "heatmap-opacity": 0.9,
       "heatmap-color": [
         "interpolate",
         ["linear"],
         ["heatmap-density"],
         0,
         "rgba(31,106,102,0)",
-        0.2,
-        "rgba(31,106,102,0.25)",
-        0.5,
-        "rgba(31,106,102,0.7)",
-        0.8,
-        "rgba(154,79,44,0.85)",
+        0.08,
+        "rgba(143,191,186,0.55)",
+        0.22,
+        "rgba(31,106,102,0.85)",
+        0.45,
+        "rgba(196,163,90,0.9)",
+        0.7,
+        "rgba(154,79,44,0.95)",
         1,
-        "rgba(143,45,45,0.95)",
+        "rgba(143,45,45,1)",
       ],
     },
   });
@@ -177,17 +202,17 @@ function addUsageLayers(map: MapLibreMap) {
     type: "circle",
     source: "points",
     paint: {
-      "circle-radius": ["interpolate", ["linear"], ["get", "starts"], 1, 7, 8, 16, 30, 28],
-      "circle-color": ["coalesce", ["get", "color"], "#1f6a66"],
-      "circle-opacity": 0.82,
-      "circle-stroke-width": 1.2,
+      "circle-radius": ["to-number", ["get", "radius"]],
+      "circle-color": ["to-color", ["coalesce", ["get", "color"], "#1f6a66"]],
+      "circle-opacity": 0.88,
+      "circle-stroke-width": 1.4,
       "circle-stroke-color": "#fbf8f2",
     },
   });
 }
 
-function bubbleCollection(buckets: LocationBucket[], group: MapGroup): GeoJSON.FeatureCollection {
-  if (group !== "case") return pointsGeoJSON(buckets);
+function bubbleCollection(buckets: LocationBucket[], group: MapGroup, metric: MapMetric): GeoJSON.FeatureCollection {
+  if (group !== "case") return pointsGeoJSON(buckets, metric);
   const colors = caseColors(
     [...new Set(buckets.flatMap((b) => Object.values(b.cases).map((c) => c.name)))].sort(),
   );
@@ -196,6 +221,7 @@ function bubbleCollection(buckets: LocationBucket[], group: MapGroup): GeoJSON.F
     const entries = Object.values(b.cases);
     entries.forEach((c, i) => {
       const offset = (i - (entries.length - 1) / 2) * 0.08;
+      const value = metric === "completed" ? c.completions : c.n;
       features.push({
         type: "Feature",
         properties: {
@@ -203,12 +229,15 @@ function bubbleCollection(buckets: LocationBucket[], group: MapGroup): GeoJSON.F
           label: `${c.name} · ${b.label}`,
           starts: c.n,
           completions: c.completions,
-          rate: b.starts ? b.completions / b.starts : 0,
+          value,
+          weight: volumeWeight(value),
+          radius: volumeRadius(value),
+          color: colors[c.name] ?? volumeColor(value),
+          rate: c.n ? c.completions / c.n : 0,
           city: b.city,
           region: b.region,
           country: b.country,
           cases: c.name,
-          color: colors[c.name] ?? "#1f6a66",
         },
         geometry: { type: "Point", coordinates: [b.lng + offset, b.lat] },
       });
@@ -217,13 +246,23 @@ function bubbleCollection(buckets: LocationBucket[], group: MapGroup): GeoJSON.F
   return { type: "FeatureCollection", features };
 }
 
-export function UsageMap({ buckets, layer, group, grain, onGrainChange }: Props) {
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (ch) => {
+    const map: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+    return map[ch] ?? ch;
+  });
+}
+
+export function UsageMap({ buckets, layer, group, grain, scope, usaLevel, metric, onGrainChange }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const popupRef = useRef<Popup | null>(null);
   const onGrain = useRef(onGrainChange);
-  const fitted = useRef(false);
+  const scopeRef = useRef(scope);
+  const cameraKey = useRef("");
+  const locationFitted = useRef(false);
   onGrain.current = onGrainChange;
+  scopeRef.current = scope;
 
   useEffect(() => {
     if (!host.current || mapRef.current) return;
@@ -243,6 +282,7 @@ export function UsageMap({ buckets, layer, group, grain, onGrainChange }: Props)
     if (map.isStyleLoaded()) ready();
 
     map.on("zoomend", () => {
+      if (scopeRef.current === "usa") return;
       const z = map.getZoom();
       const { lng, lat } = map.getCenter();
       const inUs = inUnitedStatesView(lng, lat);
@@ -256,14 +296,8 @@ export function UsageMap({ buckets, layer, group, grain, onGrainChange }: Props)
       const feat = e.features?.[0];
       if (!feat?.properties) return;
       const p = feat.properties;
-      const label = String(p.label ?? "").replace(/[&<>"']/g, (ch) => {
-        const map: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
-        return map[ch] ?? ch;
-      });
-      const cases = String(p.cases ?? "").replace(/[&<>"']/g, (ch) => {
-        const map: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
-        return map[ch] ?? ch;
-      });
+      const label = escapeHtml(String(p.label ?? ""));
+      const cases = escapeHtml(String(p.cases ?? ""));
       const html = `<p style="font-weight:600;margin:0 0 4px">${label}</p>
         <p style="margin:0">${Number(p.starts ?? 0)} started · ${Number(p.completions ?? 0)} completed</p>
         ${cases ? `<p style="margin:6px 0 0">${cases}</p>` : ""}`;
@@ -271,18 +305,14 @@ export function UsageMap({ buckets, layer, group, grain, onGrainChange }: Props)
     };
     map.on("click", "bubbles", showPopup);
     map.on("click", "region-fill", showPopup);
-    map.on("mouseenter", "bubbles", () => {
-      map.getCanvas().style.cursor = "pointer";
-    });
-    map.on("mouseleave", "bubbles", () => {
-      map.getCanvas().style.cursor = "";
-    });
-    map.on("mouseenter", "region-fill", () => {
-      map.getCanvas().style.cursor = "pointer";
-    });
-    map.on("mouseleave", "region-fill", () => {
-      map.getCanvas().style.cursor = "";
-    });
+    for (const id of ["bubbles", "region-fill"]) {
+      map.on("mouseenter", id, () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", id, () => {
+        map.getCanvas().style.cursor = "";
+      });
+    }
 
     return () => {
       popupRef.current?.remove();
@@ -294,7 +324,9 @@ export function UsageMap({ buckets, layer, group, grain, onGrainChange }: Props)
   useEffect(() => {
     const map = mapRef.current;
     if (!map?.isStyleLoaded()) {
-      map?.once("load", () => apply());
+      map?.once("load", () => {
+        void apply();
+      });
       return;
     }
     void apply();
@@ -307,34 +339,74 @@ export function UsageMap({ buckets, layer, group, grain, onGrainChange }: Props)
       const regions = current.getSource("regions") as GeoJSONSource | undefined;
       if (!points || !regions) return;
 
-      points.setData(bubbleCollection(buckets, group));
-      const loaded = await ensureAtlas(grain);
+      const usa = scope === "usa";
+      const regionGrain: MapGrain = usa ? (usaLevel === "county" ? "county" : "state") : grain;
+      const showPoints = !usa || usaLevel === "location";
+      const showRegions = usa ? usaLevel !== "location" : layer === "regions";
+      const outlineOnly = usa && usaLevel === "location";
+      const showHeat = showPoints && layer === "heatmap" && group !== "case";
+      const showBubbles = showPoints && (layer === "bubbles" || group === "case" || (layer === "heatmap" && current.getZoom() >= 8));
+
+      points.setData(bubbleCollection(buckets, group, metric));
+      const loaded = await ensureAtlas(usa ? (usaLevel === "county" ? "county" : "state") : grain === "country" ? "country" : grain);
       const base =
-        grain === "county"
+        regionGrain === "county"
           ? loaded.counties
-          : grain === "state"
+          : regionGrain === "state"
             ? loaded.states
             : loaded.countries;
-      regions.setData(paintRegions(base?.features ?? [], buckets, grain === "county" ? "county" : grain));
+      const painted = paintRegions(base?.features ?? [], buckets, regionGrain, metric);
+      if (outlineOnly) {
+        painted.features = painted.features.map((f) => ({
+          ...f,
+          properties: { ...f.properties, color: "#00000000", starts: 0, completions: 0, value: 0 },
+        }));
+      }
+      regions.setData(painted);
 
-      const showHeat = layer === "heatmap";
-      const showBubbles = layer === "bubbles" || (layer === "heatmap" && current.getZoom() >= 7);
-      const showRegions = layer === "regions";
       current.setLayoutProperty("heat", "visibility", showHeat ? "visible" : "none");
-      current.setLayoutProperty("bubbles", "visibility", showBubbles || group === "case" ? "visible" : "none");
-      current.setLayoutProperty("region-fill", "visibility", showRegions ? "visible" : "none");
-      current.setLayoutProperty("region-line", "visibility", showRegions ? "visible" : "none");
+      current.setLayoutProperty("bubbles", "visibility", showBubbles ? "visible" : "none");
+      current.setLayoutProperty("region-fill", "visibility", showRegions || outlineOnly ? "visible" : "none");
+      current.setLayoutProperty("region-line", "visibility", showRegions || outlineOnly ? "visible" : "none");
+      current.setPaintProperty("region-fill", "fill-opacity", outlineOnly ? 0 : 0.82);
 
-      if (buckets.length && !fitted.current) {
-        const bounds = new LngLatBounds();
-        for (const b of buckets) bounds.extend([b.lng, b.lat]);
-        if (!bounds.isEmpty()) {
-          current.fitBounds(bounds, { padding: 72, maxZoom: 5.2, duration: 700 });
-          fitted.current = true;
+      const nextCamera = `${scope}:${usa ? usaLevel : "world"}`;
+      const switched = cameraKey.current !== nextCamera;
+      if (switched) {
+        cameraKey.current = nextCamera;
+        locationFitted.current = false;
+      }
+      const firstLocationData = usa && usaLevel === "location" && buckets.length > 0 && !locationFitted.current;
+      if (!switched && !firstLocationData) return;
+      if (firstLocationData) locationFitted.current = true;
+      if (usa) {
+        current.setMaxBounds(US_MAX_BOUNDS);
+        const usPoints = buckets.filter((b) => isUnitedStates(b.country));
+        if (usaLevel === "location" && usPoints.length) {
+          const bounds = new LngLatBounds();
+          for (const b of usPoints) bounds.extend([b.lng, b.lat]);
+          if (!bounds.isEmpty()) {
+            current.fitBounds(bounds, { padding: 72, maxZoom: 6.2, duration: 700 });
+            return;
+          }
+        }
+        current.fitBounds(US_CONUS, {
+          padding: usaLevel === "county" ? 28 : 36,
+          maxZoom: usaLevel === "county" ? 5.4 : 4.2,
+          duration: 700,
+        });
+      } else {
+        current.setMaxBounds(null);
+        if (buckets.length) {
+          const bounds = new LngLatBounds();
+          for (const b of buckets) bounds.extend([b.lng, b.lat]);
+          if (!bounds.isEmpty()) current.fitBounds(bounds, { padding: 72, maxZoom: 4.6, duration: 700 });
+        } else {
+          current.easeTo({ center: [-40, 28], zoom: 1.6, duration: 500 });
         }
       }
     }
-  }, [buckets, grain, group, layer]);
+  }, [buckets, grain, group, layer, metric, scope, usaLevel]);
 
   return <div ref={host} className="usage-map" role="img" aria-label="Usage map" />;
 }
