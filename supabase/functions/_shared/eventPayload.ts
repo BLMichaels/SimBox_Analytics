@@ -8,6 +8,7 @@ export const EVENT_TYPES = [
   "case_started",
   "case_completed",
   "case_exited",
+  "case_checkpoint",
 ] as const;
 
 export const DELIVERY_CONTEXTS = [

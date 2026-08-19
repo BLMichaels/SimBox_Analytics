@@ -58,8 +58,14 @@ describe("validateEventPayload", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("accepts wix_embedded delivery context", () => {
-    const payload = { ...base(), delivery_context: "wix_embedded" };
+  it("accepts a checkpoint with step metadata", () => {
+    const payload = {
+      ...base(),
+      event_type: "case_checkpoint",
+      event_key: "anon-session-1:cp:5pqwHwZQxGX",
+      elapsed_seconds: 12,
+      metadata: { environment: "test", step: 2, slideId: "5pqwHwZQxGX", slideTitle: "Step 2" },
+    };
     const result = validateEventPayload(payload, JSON.stringify(payload).length);
     expect(result.ok).toBe(true);
   });

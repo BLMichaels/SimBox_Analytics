@@ -24,6 +24,7 @@ function emptyMetrics(): DashboardMetrics {
     by_case: [],
     by_delivery: [],
     by_device: [],
+    by_step: [],
   };
 }
 

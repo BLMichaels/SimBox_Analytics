@@ -120,6 +120,24 @@ export function DashboardCharts({ metrics }: Props) {
           </PieChart>
         </ResponsiveContainer>
       </ChartCard>
+
+      <ChartCard title="Sessions reaching each step">
+        <ResponsiveContainer width="100%" height={260}>
+          <BarChart
+            data={(metrics.by_step ?? []).map((s) => ({
+              name: s.label,
+              sessions: Number(s.sessions),
+            }))}
+            margin={{ left: 8, right: 8, top: 8, bottom: 8 }}
+          >
+            <CartesianGrid stroke={PAPER} vertical={false} />
+            <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+            <Tooltip />
+            <Bar dataKey="sessions" fill={TEAL} name="Sessions" />
+          </BarChart>
+        </ResponsiveContainer>
+      </ChartCard>
     </div>
   );
 }

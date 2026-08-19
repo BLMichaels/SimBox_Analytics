@@ -109,7 +109,7 @@ export function FilterBar({ cases, filters, onChange, showEventFilter, showSearc
         <fieldset>
           <legend className="text-xs font-medium tracking-wide text-ink-soft uppercase">Events</legend>
           <div className="mt-2 flex flex-wrap gap-2">
-            {(["case_started", "case_completed", "case_exited"] as EventType[]).map((t) => (
+            {(["case_started", "case_completed", "case_exited", "case_checkpoint"] as EventType[]).map((t) => (
               <label key={t} className="flex items-center gap-2 border border-line bg-paper px-2 py-1.5 text-sm">
                 <input
                   type="checkbox"

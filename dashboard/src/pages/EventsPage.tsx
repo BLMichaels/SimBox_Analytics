@@ -109,6 +109,18 @@ export function EventsPage() {
     { key: "key", header: "Case key", sortValue: (r) => r.cases?.case_key ?? "", render: (r) => <span className="font-mono text-xs">{r.cases?.case_key}</span> },
     { key: "event", header: "Event", sortValue: (r) => r.event_type, render: (r) => r.event_type.replace("case_", "") },
     {
+      key: "step",
+      header: "Step",
+      sortValue: (r) => Number(r.metadata?.step ?? -1),
+      render: (r) => {
+        const title = r.metadata?.slideTitle || r.metadata?.lastSlide;
+        const step = r.metadata?.step ?? r.metadata?.lastStep;
+        if (title) return String(title);
+        if (step != null) return `Step ${String(step)}`;
+        return "—";
+      },
+    },
+    {
       key: "session",
       header: "Session",
       sortValue: (r) => r.session_id,

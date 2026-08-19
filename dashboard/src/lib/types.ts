@@ -1,4 +1,4 @@
-export type EventType = "case_started" | "case_completed" | "case_exited";
+export type EventType = "case_started" | "case_completed" | "case_exited" | "case_checkpoint";
 export type DeliveryContext = "github_direct" | "wix_embedded" | "unknown";
 export type DeviceType = "desktop" | "tablet" | "mobile" | "unknown";
 
@@ -68,6 +68,7 @@ export type DashboardMetrics = {
   }>;
   by_delivery: Array<{ key: string; n: number }>;
   by_device: Array<{ key: string; n: number }>;
+  by_step: Array<{ step: number; label: string; sessions: number }>;
 };
 
 export type DatePreset =

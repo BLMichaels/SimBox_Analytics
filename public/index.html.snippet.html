@@ -3,12 +3,18 @@
   window.SIMBOX_TRACKING_CONFIG = {
     caseKey: "SimBox_Penetrating_Trauma",
     endpointUrl: "https://ututhxkwvhpnoyrfjzbu.supabase.co/functions/v1/record-simbox-event",
-    appVersion: "1.0.0",
+    appVersion: "1.1.0",
     debug: false,
-    startSlideIds: ["5W2RpqpDfbE"],
+    startSlideIds: ["5wBOn6JpYuo"],
     completeSlideIds: ["5aNIF0c6vDb"],
-    startSlideTitles: ["triage and vitals"],
-    completeSlideTitles: ["step 4"]
+    startSlideTitles: ["step 1"],
+    completeSlideTitles: ["step 4"],
+    steps: [
+      { id: "5wBOn6JpYuo", title: "Step 1", step: 1 },
+      { id: "6B9cdQYx4Ee", title: "Step 2", step: 2 },
+      { id: "6ojoDsd6uJI", title: "Step 3", step: 3 },
+      { id: "5aNIF0c6vDb", title: "Step 4", step: 4 }
+    ]
   };
 </script>
 <script src="simbox-tracking.js"></script>
