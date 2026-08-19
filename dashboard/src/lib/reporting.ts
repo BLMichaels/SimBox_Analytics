@@ -193,6 +193,70 @@ export function outcomeLabel(outcome: SessionSummary["outcome"]): string {
   return "In progress";
 }
 
+export function firstEvent(
+  events: CaseEventRecord[],
+  type: CaseEventRecord["event_type"],
+): CaseEventRecord | undefined {
+  return events.find((e) => e.event_type === type);
+}
+
+export function eventStamp(events: CaseEventRecord[], type: CaseEventRecord["event_type"]): string {
+  const hit = firstEvent(events, type);
+  return hit ? formatLocal(hit.occurred_at) : "";
+}
+
+export function stepStamp(events: CaseEventRecord[], label: string): string {
+  const hit = events.find((e) => stepLine(e) === label);
+  return hit ? formatLocal(hit.occurred_at) : "";
+}
+
+export function progressionLine(session: SessionSummary): string {
+  return session.events
+    .map((e) => (e.event_type === "case_checkpoint" ? stepLine(e) : eventLabel(e.event_type)))
+    .filter((label) => label && label !== "—")
+    .join(" → ");
+}
+
+function stepSortKey(label: string): [number, string] {
+  const match = /(\d+)/.exec(label);
+  const n = match ? Number(match[1]) : Number.POSITIVE_INFINITY;
+  return [Number.isFinite(n) ? n : Number.POSITIVE_INFINITY, label];
+}
+
+export function unionStepLabels(sessions: SessionSummary[]): string[] {
+  const seen = new Set<string>();
+  for (const session of sessions) {
+    for (const event of session.events) {
+      if (event.event_type !== "case_checkpoint" && event.event_type !== "case_started") continue;
+      const label = stepLine(event);
+      if (label && label !== "—") seen.add(label);
+    }
+  }
+  return [...seen].sort((a, b) => {
+    const [an, as] = stepSortKey(a);
+    const [bn, bs] = stepSortKey(b);
+    if (an !== bn) return an - bn;
+    return as.localeCompare(bs);
+  });
+}
+
+export function sessionWideCsvRow(
+  s: SessionSummary,
+  stepLabels: string[],
+): Record<string, string | number | null> {
+  const row: Record<string, string | number | null> = {
+    ...sessionCsvRow(s),
+    progression: progressionLine(s),
+    started_event: eventStamp(s.events, "case_started"),
+    completed_event: eventStamp(s.events, "case_completed"),
+    exited_event: eventStamp(s.events, "case_exited"),
+  };
+  for (const label of stepLabels) {
+    row[label] = stepStamp(s.events, label);
+  }
+  return row;
+}
+
 export function sessionCsvRow(s: SessionSummary): Record<string, string | number | null> {
   return {
     session_id: s.session_id,

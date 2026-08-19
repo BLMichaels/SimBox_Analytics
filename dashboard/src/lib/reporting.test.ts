@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CaseEventRecord } from "./types";
-import { sessionTimeline, summarizeSessions } from "./reporting";
+import { sessionTimeline, summarizeSessions, unionStepLabels } from "./reporting";
 
 function event(partial: Partial<CaseEventRecord> & Pick<CaseEventRecord, "id" | "event_type" | "occurred_at">): CaseEventRecord {
   return {
@@ -50,6 +50,7 @@ describe("summarizeSessions", () => {
     expect(session.postal).toBe("30303");
     expect(session.site).toBe("EMORY1");
     expect(session.elapsed_seconds).toBe(240);
+    expect(unionStepLabels([session])).toEqual(["Step 2"]);
   });
 });
 
