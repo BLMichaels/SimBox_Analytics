@@ -23,5 +23,6 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "../supabase/functions/_shared/eventPayload.ts"]
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
 }
