@@ -36,3 +36,7 @@ verify_jwt = false
 [functions.admin-delete-simbox-events]
 verify_jwt = true
 # Dashboard admins only. JWT required. Service role is used only after admin_users check.
+
+[functions.admin-manage-access]
+verify_jwt = true
+# Invite and revoke dashboard administrators. JWT required.

@@ -220,13 +220,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const payload = validated.value;
   const geo = await lookupNetworkLocality(req);
   const clientMeta = { ...payload.metadata };
-  for (const key of ["city", "region", "country", "postal", "timezone", "latitude", "longitude"]) {
+  for (const key of ["city", "region", "country", "postal", "timezone", "latitude", "longitude", "geoSource"]) {
     delete clientMeta[key];
   }
   const metadata = {
     ...clientMeta,
     ...geo,
   };
+  if (geo.city || geo.region || geo.country || geo.postal) {
+    metadata.geoSource = "ip";
+  }
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceKey) {
@@ -251,6 +254,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   if (!caseRow || caseRow.active !== true) {
     return json({ error: "Case not available" }, 404, cors.origin);
+  }
+
+  const { data: suppressed } = await supabase
+    .from("suppressed_event_keys")
+    .select("event_key")
+    .eq("event_key", payload.event_key)
+    .maybeSingle();
+  if (suppressed) {
+    return json({ ok: true, duplicate: true, suppressed: true }, 200, cors.origin);
   }
 
   const { error: insertError } = await supabase.from("case_events").insert({

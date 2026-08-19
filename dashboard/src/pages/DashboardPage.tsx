@@ -237,7 +237,8 @@ export function DashboardPage() {
 
       <p className="mt-2 mb-6 text-[11px] text-ink-soft">
         Session outcomes in this extract: {completedSessions} completed, {exitedSessions} exited, {inProgress} in
-        progress. Named user and hospital are not collected from the player. Site code appears only when the
+        progress. Named user and hospital are not collected from the player. City, state, and postal
+        come from IP geolocation (the IP itself is not stored). Site code appears only when the
         case URL includes <code className="font-mono">?simbox_site=</code>.
       </p>
 
@@ -252,7 +253,7 @@ export function DashboardPage() {
         />
         <CountTable
           title="By locality"
-          caption="City, region, postal, country from network lookup at ingest. Historical events may show Not resolved."
+          caption="City, region, postal, and country from IP geolocation at ingest. The IP is not stored. Older events may show Not resolved."
           rows={byGeo}
           empty="No session locality in this range."
         />

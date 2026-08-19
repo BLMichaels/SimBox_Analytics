@@ -61,7 +61,8 @@ export function HelpPage() {
       </p>
       <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6">
         <li>
-          <strong>City, state/region, postal/ZIP, country, timezone</strong> are looked up from the request network at ingest. The raw IP is not stored.
+          <strong>City, state/region, postal/ZIP, country, timezone</strong> are resolved by IP
+          geolocation at ingest. The learner’s IP is used for the lookup only and is not stored.
         </li>
         <li>
           <strong>Site code</strong> (hospital or program identifier you assign) is recorded when the case URL includes{" "}
@@ -73,6 +74,20 @@ export function HelpPage() {
       </ul>
       <p className="mt-3 text-sm leading-6 text-ink-soft">
         Events recorded before locality lookup was enabled will show “Not resolved” until new sessions arrive.
+      </p>
+
+      <h2 className="font-serif mt-10 text-2xl text-ink">Inviting colleagues</h2>
+      <p className="mt-2 text-sm leading-6 text-ink-soft">
+        Use the Access page to send an invite email. The public sign-in page does not create
+        accounts. Removing access takes effect immediately; they will see “Not authorized” if they
+        still have a saved session.
+      </p>
+
+      <h2 className="font-serif mt-10 text-2xl text-ink">Deleting events</h2>
+      <p className="mt-2 text-sm leading-6 text-ink-soft">
+        Deleting from the event log removes the rows from the database and blocks those action keys
+        from being recorded again, even if a case tab is still open. A new browser tab starts a new
+        anonymous session and can still record new activity.
       </p>
 
       <h2 className="font-serif mt-10 text-2xl text-ink">Troubleshooting</h2>

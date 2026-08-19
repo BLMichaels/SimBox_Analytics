@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DataTable, type Column } from "../components/DataTable";
 import { FilterBar } from "../components/FilterBar";
 import { SessionLink } from "../components/SessionLink";
+import { callAdminFunction } from "../lib/adminApi";
 import { downloadCsv, rangeStamp } from "../lib/csv";
 import { formatDuration, formatLocal, rangeForPreset } from "../lib/dates";
 import { applyClientFilters, fetchCaseEvents } from "../lib/fetchEvents";
@@ -11,6 +12,8 @@ import { supabase } from "../lib/supabase";
 import { useLiveReload } from "../lib/useLiveReload";
 import type { CaseEventRecord, CaseRecord, Filters } from "../lib/types";
 
+const DELETE_CHUNK = 400;
+
 export function EventsPage() {
   const [cases, setCases] = useState<CaseRecord[]>([]);
   const [rows, setRows] = useState<CaseEventRecord[]>([]);
@@ -18,6 +21,8 @@ export function EventsPage() {
   const [confirm, setConfirm] = useState<null | { ids: string[]; label: string }>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const loadGen = useRef(0);
   const [filters, setFilters] = useState<Filters>(() => {
     const { from, to } = rangeForPreset("last30");
     return {
@@ -47,6 +52,7 @@ export function EventsPage() {
   }, []);
 
   const load = useCallback(async () => {
+    const gen = ++loadGen.current;
     setError(null);
     const fetched = await fetchCaseEvents({
       from: bounds.from,
@@ -56,6 +62,7 @@ export function EventsPage() {
       deliveryContexts: filters.deliveryContexts,
       deviceTypes: filters.deviceTypes,
     });
+    if (gen !== loadGen.current) return;
     if (fetched.error) {
       setError(fetched.error);
       return;
@@ -79,7 +86,7 @@ export function EventsPage() {
     void load();
   }, [load]);
 
-  useLiveReload(load);
+  useLiveReload(load, !busy);
 
   const columns: Column<CaseEventRecord>[] = [
     { key: "local", header: "Local date/time", sortValue: (r) => r.occurred_at, render: (r) => formatLocal(r.occurred_at) },
@@ -130,38 +137,34 @@ export function EventsPage() {
     .map((r) => r.id);
 
   async function deleteIds(ids: string[]) {
-    const { error: delError } = await supabase.from("case_events").delete().in("id", ids);
-    if (!delError) return;
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
-    const url = import.meta.env.VITE_SUPABASE_URL;
-    const anon = import.meta.env.VITE_SUPABASE_ANON_KEY;
-    if (!token || !url || !anon) {
-      throw new Error("delete");
+    let deleted = 0;
+    for (let i = 0; i < ids.length; i += DELETE_CHUNK) {
+      const chunk = ids.slice(i, i + DELETE_CHUNK);
+      const result = await callAdminFunction<{ deleted?: number }>("admin-delete-simbox-events", {
+        ids: chunk,
+      });
+      deleted += Number(result.deleted ?? chunk.length);
     }
-    const res = await fetch(`${url.replace(/\/$/, "")}/functions/v1/admin-delete-simbox-events`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        apikey: anon,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ ids }),
-    });
-    if (!res.ok) throw new Error("delete");
+    return deleted;
   }
 
   async function confirmDelete() {
     if (!confirm) return;
     setBusy(true);
     setError(null);
+    setNotice(null);
+    const removing = new Set(confirm.ids);
     try {
-      await deleteIds(confirm.ids);
+      const deleted = await deleteIds(confirm.ids);
+      setRows((prev) => prev.filter((row) => !removing.has(row.id)));
       setSelectedIds(new Set());
       setConfirm(null);
+      setNotice(
+        `Removed ${deleted} event${deleted === 1 ? "" : "s"}. Those action keys will not be recorded again.`,
+      );
       await load();
-    } catch {
-      setError("Unable to delete the selected events.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to delete the selected events.");
     } finally {
       setBusy(false);
     }
@@ -177,7 +180,8 @@ export function EventsPage() {
         <div>
           <h1 className="font-serif text-3xl text-ink">Event log</h1>
           <p className="mt-1 text-sm text-ink-soft">
-            Raw anonymous actions. Click a session ID to open the dossier.
+            Raw anonymous actions. Click a session ID to open the dossier. Deletions are permanent
+            and blocked from being recorded again.
             {rows.length ? ` ${rows.length} event${rows.length === 1 ? "" : "s"} in this range.` : ""}
           </p>
         </div>
@@ -230,6 +234,11 @@ export function EventsPage() {
           Delete test/seed in list{testIds.length ? ` (${testIds.length})` : ""}
         </button>
       </div>
+      {notice ? (
+        <p role="status" className="mb-4 text-sm text-ok">
+          {notice}
+        </p>
+      ) : null}
       {error ? (
         <p role="alert" className="mb-4 text-sm text-danger">
           {error}
@@ -249,7 +258,7 @@ export function EventsPage() {
       {confirm ? (
         <ConfirmDialog
           title="Delete events?"
-          body={`This permanently removes ${confirm.label}. Completions and starts in reports will update after deletion.`}
+          body={`This permanently removes ${confirm.label} from the database. The same session cannot write those actions back.`}
           confirmLabel={busy ? "Deleting…" : "Delete"}
           onConfirm={() => {
             if (!busy) void confirmDelete();

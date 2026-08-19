@@ -8,8 +8,7 @@ export function NotAuthorizedPage() {
         <h1 className="font-serif text-3xl text-ink">Not authorized</h1>
         <p className="mt-3 text-sm text-ink-soft">
           {user?.email} is signed in but is not listed as a SimBox analytics administrator.
-          Ask an existing admin to add your user id to <code className="font-mono">admin_users</code>
-          .
+          Ask an existing administrator to invite you from the Access page.
         </p>
         <button
           type="button"

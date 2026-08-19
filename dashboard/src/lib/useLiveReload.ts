@@ -2,8 +2,9 @@ import { useEffect } from "react";
 import { supabase } from "./supabase";
 
 /** Reload dashboard data as soon as new anonymous events arrive. */
-export function useLiveReload(reload: () => void) {
+export function useLiveReload(reload: () => void, enabled = true) {
   useEffect(() => {
+    if (!enabled) return;
     const interval = window.setInterval(reload, 4000);
     const channel = supabase
       .channel("case_events_live")
@@ -19,5 +20,5 @@ export function useLiveReload(reload: () => void) {
       window.clearInterval(interval);
       void supabase.removeChannel(channel);
     };
-  }, [reload]);
+  }, [enabled, reload]);
 }
