@@ -16,8 +16,8 @@ export default function App() {
         <Route path="/events" element={<EventsPage />} />
         <Route path="/help" element={<HelpPage />} />
       </Route>
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/" element={<Navigate to="/events" replace />} />
+      <Route path="*" element={<Navigate to="/events" replace />} />
     </Routes>
   );
 }

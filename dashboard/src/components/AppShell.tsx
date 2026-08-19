@@ -2,9 +2,9 @@ import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 
 const links = [
+  { to: "/events", label: "Events" },
   { to: "/dashboard", label: "Overview" },
   { to: "/cases", label: "Cases" },
-  { to: "/events", label: "Events" },
   { to: "/help", label: "Help" },
 ];
 

@@ -24,7 +24,7 @@ export function EventsPage() {
       deliveryContexts: [],
       deviceTypes: [],
       search: "",
-      includeNonProduction: import.meta.env.DEV,
+      includeNonProduction: true,
     };
   });
 
@@ -146,7 +146,10 @@ export function EventsPage() {
       <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="font-serif text-3xl text-ink">Event log</h1>
-          <p className="mt-1 text-sm text-ink-soft">Anonymous session identifiers only. No names, emails, or free-text responses.</p>
+          <p className="mt-1 text-sm text-ink-soft">
+            Live anonymous starts, completions, and exits. This list refreshes every few seconds.
+            {rows.length ? ` ${rows.length} event${rows.length === 1 ? "" : "s"} in this range.` : ""}
+          </p>
         </div>
         <button type="button" className="border border-line bg-card px-3 py-2 text-sm" onClick={exportCsv}>
           Export CSV

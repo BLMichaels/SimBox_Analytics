@@ -43,7 +43,7 @@ export function DashboardPage() {
       deliveryContexts: [],
       deviceTypes: [],
       search: "",
-      includeNonProduction: import.meta.env.DEV,
+      includeNonProduction: true,
     };
   });
 
