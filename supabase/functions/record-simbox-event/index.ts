@@ -123,25 +123,39 @@ async function fetchJson(url: string, timeoutMs: number): Promise<Record<string,
   }
 }
 
-function applyLocality(out: Record<string, string>, body: Record<string, unknown>): void {
+function applyLocality(out: Record<string, string | number>, body: Record<string, unknown>): void {
   const city = body.city;
   const region = body.region ?? body.regionName ?? body.region_name;
   const country = body.country_name ?? body.country;
   const postal = body.postal ?? body.zip;
+  const county = body.county ?? body.district;
   let timezone: unknown = body.timezone;
   if (timezone && typeof timezone === "object" && !Array.isArray(timezone)) {
     timezone = (timezone as Record<string, unknown>).id ?? (timezone as Record<string, unknown>).name;
   }
   if (typeof city === "string" && city && city !== "Not found") out.city = clipMeta(city);
   if (typeof region === "string" && region) out.region = clipMeta(region);
+  if (typeof county === "string" && county) out.county = clipMeta(county);
   if (typeof country === "string" && country && country.length > 2) out.country = clipMeta(country);
   else if (typeof country === "string" && country) out.country = clipMeta(country, 8);
   if (typeof postal === "string" && postal) out.postal = clipMeta(postal, 12);
   if (typeof timezone === "string" && timezone) out.timezone = clipMeta(timezone, 40);
+  const lat = asCoord(body.latitude ?? body.lat, -90, 90);
+  const lng = asCoord(body.longitude ?? body.lon ?? body.lng, -180, 180);
+  if (lat != null && lng != null) {
+    out.latitude = lat;
+    out.longitude = lng;
+  }
 }
 
-async function lookupNetworkLocality(req: Request): Promise<Record<string, string>> {
-  const out: Record<string, string> = {};
+function asCoord(value: unknown, min: number, max: number): number | null {
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isFinite(n) || n < min || n > max) return null;
+  return Math.round(n * 1000) / 1000;
+}
+
+async function lookupNetworkLocality(req: Request): Promise<Record<string, string | number>> {
+  const out: Record<string, string | number> = {};
   const countryHeader = req.headers.get("cf-ipcountry");
   if (countryHeader && countryHeader !== "XX" && countryHeader !== "T1") {
     out.country = clipMeta(countryHeader, 8);
@@ -158,7 +172,7 @@ async function lookupNetworkLocality(req: Request): Promise<Record<string, strin
   const encoded = encodeURIComponent(ip);
   const ipwho = await fetchJson(`https://ipwho.is/${encoded}`, 1200);
   if (ipwho && ipwho.success !== false) applyLocality(out, ipwho);
-  if (out.city && out.country) return out;
+  if (out.city && out.country && out.latitude != null && out.longitude != null) return out;
   const ipapi = await fetchJson(`https://ipapi.co/${encoded}/json/`, 1200);
   if (ipapi && !ipapi.error) applyLocality(out, ipapi);
   return out;
@@ -220,14 +234,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const payload = validated.value;
   const geo = await lookupNetworkLocality(req);
   const clientMeta = { ...payload.metadata };
-  for (const key of ["city", "region", "country", "postal", "timezone", "latitude", "longitude", "geoSource"]) {
+  for (const key of ["city", "region", "country", "postal", "timezone", "latitude", "longitude", "county", "geoSource"]) {
     delete clientMeta[key];
   }
   const metadata = {
     ...clientMeta,
     ...geo,
   };
-  if (geo.city || geo.region || geo.country || geo.postal) {
+  if (geo.city || geo.region || geo.country || geo.postal || geo.latitude != null) {
     metadata.geoSource = "ip";
   }
   const supabaseUrl = Deno.env.get("SUPABASE_URL");

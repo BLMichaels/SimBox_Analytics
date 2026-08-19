@@ -74,6 +74,7 @@ export function HelpPage() {
       </ul>
       <p className="mt-3 text-sm leading-6 text-ink-soft">
         Events recorded before locality lookup was enabled will show “Not resolved” until new sessions arrive.
+        The Map page places sessions by those fields and by city-level coordinates stored at ingest.
       </p>
 
       <h2 className="font-serif mt-10 text-2xl text-ink">Inviting colleagues</h2>

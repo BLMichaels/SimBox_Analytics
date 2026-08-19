@@ -35,20 +35,26 @@ export function accessLabel(value: string | null | undefined): string {
 export type Locality = {
   city: string;
   region: string;
+  county: string;
   postal: string;
   country: string;
   timezone: string;
   siteKey: string;
+  latitude: number | null;
+  longitude: number | null;
 };
 
 export function localityOf(row: CaseEventRecord): Locality {
   return {
     city: metaString(row, "city"),
     region: metaString(row, "region"),
+    county: metaString(row, "county"),
     postal: metaString(row, "postal"),
     country: metaString(row, "country"),
     timezone: metaString(row, "timezone"),
     siteKey: metaString(row, "siteKey"),
+    latitude: metaNumber(row, "latitude"),
+    longitude: metaNumber(row, "longitude"),
   };
 }
 
@@ -89,6 +95,7 @@ export type SessionSummary = {
   location: string;
   city: string;
   region: string;
+  county: string;
   postal: string;
   country: string;
   timezone: string;
@@ -96,6 +103,8 @@ export type SessionSummary = {
   access: string;
   device: string;
   environment: string;
+  latitude: number | null;
+  longitude: number | null;
   events: CaseEventRecord[];
 };
 
@@ -154,7 +163,11 @@ export function summarizeSessions(rows: CaseEventRecord[]): SessionSummary[] {
     const exited = ordered.some((e) => e.event_type === "case_exited");
     const locSource = [...ordered].reverse().find((e) => locationLine(e) !== "Not resolved") ?? last;
     const siteSource = [...ordered].reverse().find((e) => metaString(e, "siteKey")) ?? last;
+    const coordSource =
+      [...ordered].reverse().find((e) => localityOf(e).latitude != null && localityOf(e).longitude != null) ??
+      locSource;
     const loc = localityOf(locSource);
+    const coords = localityOf(coordSource);
     const completedEvent = [...ordered].reverse().find((e) => e.event_type === "case_completed");
     const elapsed =
       completedEvent?.elapsed_seconds ??
@@ -174,6 +187,7 @@ export function summarizeSessions(rows: CaseEventRecord[]): SessionSummary[] {
       location: locationLine(locSource),
       city: loc.city,
       region: loc.region,
+      county: loc.county,
       postal: loc.postal,
       country: loc.country,
       timezone: loc.timezone,
@@ -181,6 +195,8 @@ export function summarizeSessions(rows: CaseEventRecord[]): SessionSummary[] {
       access: accessLabel(first.delivery_context),
       device: first.device_type ?? "unknown",
       environment: metaString(first, "environment") || "production",
+      latitude: coords.latitude,
+      longitude: coords.longitude,
       events: ordered,
     });
   }
@@ -276,6 +292,8 @@ export function sessionCsvRow(s: SessionSummary): Record<string, string | number
     postal: s.postal,
     country: s.country,
     timezone: s.timezone,
+    latitude: s.latitude,
+    longitude: s.longitude,
     site_code: s.site === "Not provided" ? "" : s.site,
     access: s.access,
     device: s.device,

@@ -3,6 +3,7 @@ import { useAuth } from "../lib/auth";
 
 const links = [
   { to: "/dashboard", label: "Overview" },
+  { to: "/map", label: "Map" },
   { to: "/events", label: "Events" },
   { to: "/cases", label: "Cases" },
   { to: "/access", label: "Access" },

@@ -47,6 +47,7 @@ describe("summarizeSessions", () => {
     expect(session.event_count).toBe(3);
     expect(session.checkpoint_count).toBe(1);
     expect(session.city).toBe("Atlanta");
+    expect(session.county).toBe("");
     expect(session.postal).toBe("30303");
     expect(session.site).toBe("EMORY1");
     expect(session.elapsed_seconds).toBe(240);
