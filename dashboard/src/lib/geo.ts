@@ -226,6 +226,32 @@ export function stateCentroid(name: string): { lat: number; lng: number } | null
   return hit ? { lat: hit.lat, lng: hit.lng } : null;
 }
 
+/** Best-effort U.S. state from coordinates when region metadata is missing. */
+export function nearestUsState(lat: number, lng: number): string | null {
+  let best: string | null = null;
+  let bestD = Number.POSITIVE_INFINITY;
+  for (const [key, c] of Object.entries(US_STATE_CENTROIDS)) {
+    if (key === "dc") continue;
+    const d = (c.lat - lat) ** 2 + (c.lng - lng) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = c.name;
+    }
+  }
+  // Reject points that are clearly outside the U.S. neighborhood.
+  if (bestD > 25) return null;
+  return best;
+}
+
+export function resolveUsState(bucket: { region: string; country: string; lat: number; lng: number }): string | null {
+  if (!isUnitedStates(bucket.country)) return null;
+  if (bucket.region) {
+    const name = canonicalState(bucket.region);
+    if (stateCentroid(name)) return name;
+  }
+  return nearestUsState(bucket.lat, bucket.lng);
+}
+
 type Ring = number[][];
 
 function ringContains(ring: Ring, lng: number, lat: number): boolean {

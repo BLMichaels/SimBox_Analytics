@@ -102,8 +102,10 @@ export function MapPage() {
   }, [visible]);
 
   const usa = scope === "usa";
-  const showPointLayers = !usa || usaLevel === "location";
   const showMap = placing || buckets.length > 0 || usa;
+  // Prefer bubbles whenever we have points — choropleth is an overlay, not a replacement.
+  const mapLayer: MapLayer =
+    group === "case" ? "bubbles" : usa && usaLevel !== "location" ? "bubbles" : layer;
 
   return (
     <div>
@@ -303,7 +305,7 @@ export function MapPage() {
         {!placing && unplaced ? ` · ${unplaced} without a locatable city or region` : ""}
         {!placing &&
           usa &&
-          ` · ${usaLevel === "state" ? "state choropleth (switch to Locations for bubbles)" : usaLevel === "county" ? "county choropleth (switch to Locations for bubbles)" : "city-level bubbles / heatmap"}`}
+          ` · ${usaLevel === "state" ? "state choropleth + state bubbles" : usaLevel === "county" ? "county choropleth + location bubbles" : "city-level bubbles / heatmap"}`}
         {!placing &&
           !usa &&
           (layer === "regions" ? ` · region view: ${grainLabel} (zoom to change)` : "")}
@@ -350,7 +352,7 @@ export function MapPage() {
         <Suspense fallback={<div className="usage-map grid place-items-center text-sm text-ink-soft">Loading map…</div>}>
           <UsageMap
             buckets={visible}
-            layer={showPointLayers ? (group === "case" ? "bubbles" : layer) : "regions"}
+            layer={mapLayer}
             group={group}
             grain={grain}
             scope={scope}
@@ -388,8 +390,8 @@ export function MapPage() {
           <h2 className="font-serif text-lg text-ink">How to read this</h2>
           <ul className="mt-2 list-disc space-y-1 pl-5">
             <li>
-              United States defaults to Locations (bubbles/heatmap). States and Counties are choropleth fills — use
-              Locations when you want bubbles or heat.
+              United States defaults to Locations (city bubbles). States and Counties add choropleth fills and keep
+              location bubbles visible.
             </li>
             <li>Map data toggles between raw session count and each place&apos;s share of the total in the current view.</li>
             <li>Colors move from teal to gold to copper to red as values increase. Heatmaps use the same ramp.</li>

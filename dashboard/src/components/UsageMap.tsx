@@ -11,6 +11,7 @@ import {
   inUnitedStatesView,
   isUnitedStates,
   normName,
+  resolveUsState,
 } from "../lib/geo";
 import type { LocationBucket, MapDisplay, MapGrain, MapGroup, MapLayer, MapMetric, MapScope, UsaLevel } from "../lib/mapData";
 import {
@@ -19,8 +20,7 @@ import {
   caseColors,
   caseMetricTotal,
   pointsGeoJSON,
-  shareColor,
-  volumeColor,
+  rollupUsStates,
 } from "../lib/mapData";
 import "maplibre-gl/dist/maplibre-gl.css";
 
@@ -119,7 +119,13 @@ function paintRegions(
   for (const b of buckets) {
     if (grain === "country") add(canonicalCountry(b.country), b);
     else if (grain === "state") {
-      if (isUnitedStates(b.country) && b.region) add(canonicalState(b.region), b);
+      const state = resolveUsState(b);
+      if (state) add(state, b);
+      else {
+        const hit = features.find((f) => featureContains(f, b.lng, b.lat));
+        if (hit) add(canonicalState(featureName(hit)), b);
+        else if (isUnitedStates(b.country) && b.region) add(canonicalState(b.region), b);
+      }
     } else {
       const id = countyIdForPoint(features, b.lng, b.lat);
       if (id) add(id, b);
@@ -195,9 +201,9 @@ function bubbleCollection(
           share: visual.share,
           value: visual.value,
           display,
-          weight: visual.weight,
-          radius: visual.radius,
-          color: colors[c.name] ?? (display === "share" ? shareColor(visual.value) : volumeColor(count)),
+          weight: Math.max(0.35, visual.weight),
+          radius: Math.max(10, visual.radius || 10),
+          color: colors[c.name] ?? visual.color ?? "#1f6a66",
           rate: c.n ? c.completions / c.n : 0,
           city: b.city,
           region: b.region,
@@ -220,8 +226,30 @@ function addUsageLayers(map: MapLibreMap) {
     type: "fill",
     source: "regions",
     paint: {
-      "fill-color": ["coalesce", ["get", "color"], "rgba(0,0,0,0)"],
-      "fill-opacity": 0.82,
+      // Drive color from numeric value so invalid hex/rgba strings cannot blank the layer.
+      "fill-color": [
+        "case",
+        ["<=", ["to-number", ["coalesce", ["get", "value"], 0]], 0],
+        "rgba(0,0,0,0)",
+        [
+          "interpolate",
+          ["linear"],
+          ["to-number", ["get", "value"]],
+          0.5,
+          "#8fbfba",
+          1,
+          "#1f6a66",
+          2,
+          "#5a8f6a",
+          4,
+          "#c4a35a",
+          8,
+          "#9a4f2c",
+          16,
+          "#8f2d2d",
+        ],
+      ],
+      "fill-opacity": 0.85,
     },
   });
   map.addLayer({
@@ -263,10 +291,15 @@ function addUsageLayers(map: MapLibreMap) {
     type: "circle",
     source: "points",
     paint: {
-      "circle-radius": ["coalesce", ["get", "radius"], 10],
-      "circle-color": ["coalesce", ["get", "color"], "#1f6a66"],
-      "circle-opacity": 0.88,
-      "circle-stroke-width": 1.4,
+      "circle-radius": ["coalesce", ["to-number", ["get", "radius"]], 12],
+      "circle-color": [
+        "case",
+        ["has", "color"],
+        ["get", "color"],
+        "#1f6a66",
+      ],
+      "circle-opacity": 0.9,
+      "circle-stroke-width": 1.6,
       "circle-stroke-color": "#fbf8f2",
     },
   });
@@ -380,14 +413,17 @@ export function UsageMap({ buckets, layer, group, grain, scope, usaLevel, metric
 
     const usa = sc === "usa";
     const regionGrain: MapGrain = usa ? (level === "county" ? "county" : "state") : gr;
-    const showPoints = !usa || level === "location";
     const showRegions = usa ? level !== "location" : lyr === "regions";
-    const outlineOnly = usa && level === "location";
-    const showHeat = showPoints && lyr === "heatmap" && grp !== "case";
-    const showBubbles =
-      showPoints && (lyr === "bubbles" || grp === "case" || (lyr === "heatmap" && map.getZoom() >= 8));
+    // Always plot placed session points. Never hide markers behind choropleth-only modes.
+    const showHeat = lyr === "heatmap" && grp !== "case";
+    const bubblesOn = pts.length > 0 && !showHeat;
+    // States view: also add state-centroid markers so sparse city points stay visible at CONUS zoom.
+    const pointBuckets =
+      usa && level === "state" && grp !== "case"
+        ? [...pts, ...rollupUsStates(pts)]
+        : pts;
 
-    const collection = bubbleCollection(pts, grp, met, disp);
+    const collection = bubbleCollection(pointBuckets, grp, met, disp);
     points.setData(collection);
 
     try {
@@ -397,28 +433,25 @@ export function UsageMap({ buckets, layer, group, grain, scope, usaLevel, metric
       const base =
         regionGrain === "county" ? loaded.counties : regionGrain === "state" ? loaded.states : loaded.countries;
       const painted = paintRegions(base?.features ?? [], pts, regionGrain, met, disp);
-      if (outlineOnly) {
-        painted.features = painted.features.map((f) => ({
-          ...f,
-          properties: {
-            ...f.properties,
-            color: "rgba(0,0,0,0)",
-            starts: 0,
-            completions: 0,
-            value: 0,
-          },
-        }));
-      }
       regions.setData(painted);
     } catch {
       regions.setData({ type: "FeatureCollection", features: [] });
     }
 
     map.setLayoutProperty("heat", "visibility", showHeat ? "visible" : "none");
-    map.setLayoutProperty("bubbles", "visibility", showBubbles ? "visible" : "none");
-    map.setLayoutProperty("region-fill", "visibility", showRegions || outlineOnly ? "visible" : "none");
-    map.setLayoutProperty("region-line", "visibility", showRegions || outlineOnly ? "visible" : "none");
-    map.setPaintProperty("region-fill", "fill-opacity", outlineOnly ? 0 : 0.82);
+    map.setLayoutProperty("bubbles", "visibility", bubblesOn ? "visible" : "none");
+    map.setLayoutProperty("region-fill", "visibility", showRegions ? "visible" : "none");
+    map.setLayoutProperty("region-line", "visibility", showRegions ? "visible" : "none");
+    map.setPaintProperty("region-fill", "fill-opacity", showRegions ? 0.72 : 0);
+    map.setPaintProperty("bubbles", "circle-radius", [
+      "max",
+      8,
+      ["coalesce", ["to-number", ["get", "radius"]], 12],
+    ]);
+    map.setPaintProperty("bubbles", "circle-color", ["coalesce", ["get", "color"], "#1f6a66"]);
+    map.setPaintProperty("bubbles", "circle-opacity", 0.92);
+    map.setPaintProperty("bubbles", "circle-stroke-width", 2);
+    map.setPaintProperty("bubbles", "circle-stroke-color", "#1c2430");
 
     const nextCamera = `${sc}:${usa ? level : "world"}`;
     const switched = cameraKey.current !== nextCamera;
@@ -428,7 +461,7 @@ export function UsageMap({ buckets, layer, group, grain, scope, usaLevel, metric
     }
 
     const dataKey = `${nextCamera}:${pts.length}:${pts[0]?.key ?? ""}:${pts[pts.length - 1]?.key ?? ""}`;
-    const needDataFit = pts.length > 0 && dataFitKey.current !== dataKey && (showPoints || switched);
+    const needDataFit = pts.length > 0 && dataFitKey.current !== dataKey && (bubblesOn || switched);
     if (!switched && !needDataFit) return;
     if (needDataFit) dataFitKey.current = dataKey;
 

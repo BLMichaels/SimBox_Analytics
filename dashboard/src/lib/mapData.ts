@@ -3,6 +3,8 @@ import {
   canonicalState,
   countryIso,
   isUnitedStates,
+  nearestUsState,
+  resolveUsState,
   stateCentroid,
 } from "./geo";
 import type { SessionSummary } from "./reporting";
@@ -293,13 +295,18 @@ export function bucketLocations(placed: PlacedSession[]): LocationBucket[] {
     const key = `${s.lat.toFixed(3)},${s.lng.toFixed(3)}|${s.country}|${s.region}|${s.city}`;
     let bucket = map.get(key);
     if (!bucket) {
+      const country = canonicalCountry(s.country || "Unknown");
+      let region = s.region ? canonicalState(s.region) : "";
+      if (!region && isUnitedStates(country)) {
+        region = nearestUsState(s.lat, s.lng) ?? "";
+      }
       bucket = {
         key,
         label: s.place,
         lat: s.lat,
         lng: s.lng,
-        country: canonicalCountry(s.country || "Unknown"),
-        region: s.region ? canonicalState(s.region) : "",
+        country,
+        region,
         county: s.county || "",
         city: s.city,
         starts: 0,
@@ -319,6 +326,44 @@ export function bucketLocations(placed: PlacedSession[]): LocationBucket[] {
   return [...map.values()].sort((a, b) => b.starts - a.starts);
 }
 
+/** One bubble per U.S. state for choropleth companion / fallback markers. */
+export function rollupUsStates(buckets: LocationBucket[]): LocationBucket[] {
+  const map = new Map<string, LocationBucket>();
+  for (const b of buckets) {
+    const state = resolveUsState(b);
+    if (!state) continue;
+    const centroid = stateCentroid(state);
+    if (!centroid) continue;
+    const key = state.toLowerCase();
+    let cur = map.get(key);
+    if (!cur) {
+      cur = {
+        key,
+        label: state,
+        lat: centroid.lat,
+        lng: centroid.lng,
+        country: "United States of America",
+        region: state,
+        county: "",
+        city: "",
+        starts: 0,
+        completions: 0,
+        cases: {},
+      };
+      map.set(key, cur);
+    }
+    cur.starts += b.starts;
+    cur.completions += b.completions;
+    for (const [ck, c] of Object.entries(b.cases)) {
+      const prev = cur.cases[ck] ?? { name: c.name, n: 0, completions: 0 };
+      prev.n += c.n;
+      prev.completions += c.completions;
+      cur.cases[ck] = prev;
+    }
+  }
+  return [...map.values()].sort((a, b) => b.starts - a.starts);
+}
+
 export function pointsGeoJSON(
   buckets: LocationBucket[],
   metric: MapMetric = "started",
@@ -331,6 +376,7 @@ export function pointsGeoJSON(
     features: buckets.map((b) => {
       const count = bucketValue(b, metric);
       const visual = bucketVisual(count, denom, display);
+      const color = !visual.color || visual.color === "rgba(0,0,0,0)" ? "#1f6a66" : visual.color;
       return {
         type: "Feature",
         properties: {
@@ -342,9 +388,9 @@ export function pointsGeoJSON(
           share: visual.share,
           value: visual.value,
           display,
-          weight: visual.weight,
-          radius: visual.radius,
-          color: visual.color,
+          weight: Math.max(0.35, visual.weight),
+          radius: Math.max(10, visual.radius || 10),
+          color,
           rate: b.starts ? b.completions / b.starts : 0,
           city: b.city,
           region: b.region,
