@@ -6,6 +6,7 @@ import {
   funnelFromSessions,
   hourMix,
   kpisFromSessions,
+  sessionLocalClock,
   sessionTimeline,
   siteCohorts,
   studyBrief,
@@ -111,6 +112,8 @@ describe("study insights", () => {
     expect(funnel[0]?.n).toBe(2);
     expect(funnel.some((r) => r.label === "Completed" && r.n === 1)).toBe(true);
     expect(durationBuckets(sessions).find((r) => r.label === "5–10 min")?.n).toBe(1);
+    expect(durationBuckets(sessions, "completed").find((r) => r.label === "5–10 min")?.n).toBe(1);
+    expect(durationBuckets(sessions, "exited").find((r) => r.label === "Under 2 min")?.n).toBe(1);
     expect(weekdayMix(sessions).reduce((n, r) => n + r.n, 0)).toBe(2);
     expect(hourMix(sessions).reduce((n, r) => n + r.n, 0)).toBe(2);
     const dwell = timeOnStep(sessions);
@@ -165,6 +168,90 @@ describe("session duration filter", () => {
     expect(filtered).toHaveLength(1);
     expect(filtered[0]?.session_id).toBe("long");
     expect(kpisFromSessions(filtered).completions).toBe(1);
+  });
+});
+
+describe("sessionLocalClock and funnel depth", () => {
+  it("uses the session timezone, not the browser, for weekday and hour", () => {
+    // 2026-08-19 04:00 UTC → evening previous day in US Pacific, morning in US Eastern
+    const pacific = sessionLocalClock("2026-08-19T04:00:00.000Z", "America/Los_Angeles");
+    const eastern = sessionLocalClock("2026-08-19T04:00:00.000Z", "America/New_York");
+    expect(pacific.source).toBe("session");
+    expect(eastern.source).toBe("session");
+    expect(pacific.hour).toBe(21);
+    expect(eastern.hour).toBe(0);
+    expect(pacific.weekday).toBe(2); // Tuesday
+    expect(eastern.weekday).toBe(3); // Wednesday
+  });
+
+  it("limits the progression funnel to cases at or below a step depth", () => {
+    const rows = [
+      event({
+        id: "a1",
+        event_type: "case_started",
+        occurred_at: "2026-08-19T12:00:00.000Z",
+        session_id: "short",
+        case_id: "case-short",
+        cases: { case_key: "SimBox_Short", display_name: "Short", active: true },
+        metadata: { environment: "production" },
+      }),
+      event({
+        id: "a2",
+        event_type: "case_checkpoint",
+        occurred_at: "2026-08-19T12:01:00.000Z",
+        session_id: "short",
+        case_id: "case-short",
+        cases: { case_key: "SimBox_Short", display_name: "Short", active: true },
+        elapsed_seconds: 60,
+        metadata: { step: 2, slideTitle: "Step 2" },
+      }),
+      event({
+        id: "a3",
+        event_type: "case_checkpoint",
+        occurred_at: "2026-08-19T12:02:00.000Z",
+        session_id: "short",
+        case_id: "case-short",
+        cases: { case_key: "SimBox_Short", display_name: "Short", active: true },
+        elapsed_seconds: 120,
+        metadata: { step: 3, slideTitle: "Step 3" },
+      }),
+      event({
+        id: "a4",
+        event_type: "case_completed",
+        occurred_at: "2026-08-19T12:03:00.000Z",
+        session_id: "short",
+        case_id: "case-short",
+        cases: { case_key: "SimBox_Short", display_name: "Short", active: true },
+        elapsed_seconds: 180,
+        metadata: { step: 3 },
+      }),
+      event({
+        id: "b1",
+        event_type: "case_started",
+        occurred_at: "2026-08-19T13:00:00.000Z",
+        session_id: "long",
+        case_id: "case-long",
+        cases: { case_key: "SimBox_Long", display_name: "Long", active: true },
+        metadata: { environment: "production" },
+      }),
+      event({
+        id: "b2",
+        event_type: "case_checkpoint",
+        occurred_at: "2026-08-19T13:01:00.000Z",
+        session_id: "long",
+        case_id: "case-long",
+        cases: { case_key: "SimBox_Long", display_name: "Long", active: true },
+        elapsed_seconds: 60,
+        metadata: { step: 6, slideTitle: "Step 6" },
+      }),
+    ];
+    const sessions = summarizeSessions(rows);
+    const all = funnelFromSessions(sessions);
+    expect(all.some((r) => r.label === "Step 6")).toBe(true);
+    const shortOnly = funnelFromSessions(sessions, 3);
+    expect(shortOnly[0]?.n).toBe(1);
+    expect(shortOnly.some((r) => r.label === "Step 6")).toBe(false);
+    expect(shortOnly.some((r) => r.label === "Completed" && r.n === 1)).toBe(true);
   });
 });
 

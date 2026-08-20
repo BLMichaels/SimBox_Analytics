@@ -47,7 +47,7 @@ export function MapPage() {
   const [group, setGroup] = useState<MapGroup>("overall");
   const [grain, setGrain] = useState<MapGrain>("country");
   const [scope, setScope] = useState<MapScope>("world");
-  const [usaLevel, setUsaLevel] = useState<UsaLevel>("state");
+  const [usaLevel, setUsaLevel] = useState<UsaLevel>("location");
 
   const load = useCallback(async () => {
     setError(null);
@@ -130,7 +130,8 @@ export function MapPage() {
               pressed={usa}
               onClick={() => {
                 setScope("usa");
-                setUsaLevel("state");
+                setUsaLevel("location");
+                setLayer("bubbles");
                 setGroup("overall");
               }}
             >
@@ -285,22 +286,34 @@ export function MapPage() {
       ) : null}
 
       <p className="mb-3 text-[12px] text-ink-soft">
-        {starts} placed {usa ? "U.S. " : ""}session{starts === 1 ? "" : "s"}
-        {filters.minSessionSeconds > 0
+        {placing
+          ? "Locating sessions on the map…"
+          : `${starts} placed ${usa ? "U.S. " : ""}session${starts === 1 ? "" : "s"}`}
+        {!placing && filters.minSessionSeconds > 0
           ? ` · ≥${Math.round(filters.minSessionSeconds / 60)} min only`
           : ""}
-        {metric === "completed" ? "" : ` · ${completions} completed (${formatPercent(starts ? completions / starts : 0)})`}
-        {display === "share"
+        {!placing && metric === "completed"
+          ? ""
+          : !placing
+            ? ` · ${completions} completed (${formatPercent(starts ? completions / starts : 0)})`
+            : ""}
+        {!placing && display === "share"
           ? ` · coloring by share of ${metricTotal} ${metric === "completed" ? "completions" : "starts"} in view`
           : ""}
-        {unplaced ? ` · ${unplaced} without a locatable city or region` : ""}
-        {placing ? " · locating cities…" : ""}
-        {usa
-          ? ` · locked to ${usaLevel === "state" ? "states" : usaLevel === "county" ? "counties" : "city-level locations"}`
-          : layer === "regions"
-            ? ` · region view: ${grainLabel} (zoom to change)`
-            : ""}
+        {!placing && unplaced ? ` · ${unplaced} without a locatable city or region` : ""}
+        {!placing &&
+          usa &&
+          ` · ${usaLevel === "state" ? "state choropleth (switch to Locations for bubbles)" : usaLevel === "county" ? "county choropleth (switch to Locations for bubbles)" : "city-level bubbles / heatmap"}`}
+        {!placing &&
+          !usa &&
+          (layer === "regions" ? ` · region view: ${grainLabel} (zoom to change)` : "")}
       </p>
+      {!placing && buckets.length === 0 ? (
+        <p role="status" className="mb-3 border border-line bg-card px-4 py-3 text-sm text-ink-soft">
+          The basemap is ready, but no sessions could be placed yet. Confirm Overview has sessions with a city or
+          U.S. state, clear search/min-duration filters, and use Activity: Started.
+        </p>
+      ) : null}
       {group === "case" && caseLegend.length ? (
         <ul className="mb-3 flex flex-wrap gap-3 text-[12px] text-ink-soft">
           {caseLegend.map((item) => (
@@ -374,7 +387,10 @@ export function MapPage() {
         <section className="border border-line bg-card p-4 text-sm leading-6 text-ink-soft">
           <h2 className="font-serif text-lg text-ink">How to read this</h2>
           <ul className="mt-2 list-disc space-y-1 pl-5">
-            <li>United States locks the map to the U.S. and switches with buttons: states, counties, or city-level locations.</li>
+            <li>
+              United States defaults to Locations (bubbles/heatmap). States and Counties are choropleth fills — use
+              Locations when you want bubbles or heat.
+            </li>
             <li>Map data toggles between raw session count and each place&apos;s share of the total in the current view.</li>
             <li>Colors move from teal to gold to copper to red as values increase. Heatmaps use the same ramp.</li>
             <li>Started counts every anonymous session. Started and completed keeps only sessions that reached the last step.</li>

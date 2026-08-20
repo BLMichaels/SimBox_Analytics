@@ -86,7 +86,16 @@ export function HelpPage() {
         </li>
         <li>
           Duration prefers the reported <code className="font-mono">elapsed_seconds</code>. If that is missing, we use
-          wall-clock from the first action to the last. Ingest caps elapsed at 12 hours.
+          wall-clock from the first action to the last. Ingest caps elapsed at 12 hours. Charts can show time to
+          complete, time to exit, or both.
+        </li>
+        <li>
+          Weekday and time-of-day charts use the session’s IP-resolved timezone (from city/ZIP locality), not the
+          analyst’s browser. Sessions without a timezone fall back to UTC.
+        </li>
+        <li>
+          The progression funnel can filter to cases with ≤N numbered steps so a short case that completed is not
+          compared against Step 6 of a longer case.
         </li>
         <li>
           Minimum session length hides quick click-throughs. Export a study packet from Overview for an

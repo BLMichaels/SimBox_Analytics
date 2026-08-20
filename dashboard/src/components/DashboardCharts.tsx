@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
   Bar,
   BarChart,
@@ -10,7 +10,16 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { CountRow } from "../lib/reporting";
+import {
+  durationBuckets,
+  funnelFromSessions,
+  funnelStepOptions,
+  hourMix,
+  sessionsWithTimezone,
+  weekdayMix,
+  type DurationMode,
+  type SessionSummary,
+} from "../lib/reporting";
 import type { DashboardMetrics } from "../lib/types";
 
 const TEAL = "#1f6a66";
@@ -20,22 +29,49 @@ const PAPER = "#d4cdc0";
 
 type Props = {
   metrics: DashboardMetrics;
-  funnel?: CountRow[];
-  durations?: CountRow[];
-  weekdays?: CountRow[];
-  hours?: CountRow[];
+  sessions: SessionSummary[];
 };
 
-export function DashboardCharts({ metrics, funnel, durations, weekdays, hours }: Props) {
+export function DashboardCharts({ metrics, sessions }: Props) {
+  const [funnelMaxSteps, setFunnelMaxSteps] = useState<number | null>(null);
+  const [durationMode, setDurationMode] = useState<DurationMode>("all");
+
   const daily = metrics.daily.map((d) => ({
     day: new Date(d.day_utc).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
     starts: Number(d.starts),
     completions: Number(d.completions),
   }));
-  const funnelData = (funnel ?? []).map((r) => ({ label: r.label, sessions: r.n, rate: Math.round(r.pct * 1000) / 10 }));
-  const durationData = (durations ?? []).map((r) => ({ label: r.label, sessions: r.n }));
-  const weekdayData = (weekdays ?? []).map((r) => ({ label: r.label.slice(0, 3), sessions: r.n }));
-  const hourData = (hours ?? []).map((r) => ({ label: r.label.replace(/\s*\(.*/, ""), sessions: r.n }));
+
+  const stepOptions = useMemo(() => funnelStepOptions(sessions), [sessions]);
+  const funnel = useMemo(() => funnelFromSessions(sessions, funnelMaxSteps), [funnelMaxSteps, sessions]);
+  const durations = useMemo(() => durationBuckets(sessions, durationMode), [durationMode, sessions]);
+  const weekdays = useMemo(() => weekdayMix(sessions), [sessions]);
+  const hours = useMemo(() => hourMix(sessions), [sessions]);
+  const withTz = useMemo(() => sessionsWithTimezone(sessions), [sessions]);
+  const missingTz = sessions.length - withTz;
+
+  const funnelData = funnel.map((r) => ({ label: r.label, sessions: r.n, rate: Math.round(r.pct * 1000) / 10 }));
+  const durationData = durations.map((r) => ({ label: r.label, sessions: r.n }));
+  const weekdayData = weekdays.map((r) => ({ label: r.label.slice(0, 3), sessions: r.n }));
+  const hourData = hours.map((r) => ({ label: r.label.replace(/\s*\(.*/, ""), sessions: r.n }));
+
+  const tzCaption =
+    missingTz > 0
+      ? `Local time at the session’s IP-resolved timezone (ZIP/city). ${missingTz} without a timezone use UTC.`
+      : "Local time at the session’s IP-resolved timezone (from city/ZIP geolocation), not this browser.";
+
+  const durationTitle =
+    durationMode === "completed"
+      ? "Time to complete"
+      : durationMode === "exited"
+        ? "Time to exit"
+        : "Time to complete or exit";
+  const durationCaption =
+    durationMode === "completed"
+      ? "Only sessions that reached the last step. Elapsed when recorded; otherwise wall-clock."
+      : durationMode === "exited"
+        ? "Only sessions that exited before completion. Elapsed when recorded; otherwise wall-clock."
+        : "Completed and exited sessions. Elapsed when recorded; otherwise wall-clock from first to last action.";
 
   return (
     <div className="grid gap-4 xl:grid-cols-2">
@@ -55,10 +91,27 @@ export function DashboardCharts({ metrics, funnel, durations, weekdays, hours }:
           </LineChart>
         </ResponsiveContainer>
       </ChartCard>
+
       {funnelData.length ? (
         <ChartCard
           title="Progression funnel"
-          caption="Sessions that reached each recorded step in this range."
+          caption={
+            funnelMaxSteps == null
+              ? "Sessions that reached each recorded step. Filter by case length so a 3-step case is not compared to Step 6 of a longer case."
+              : `Only cases with ${funnelMaxSteps} or fewer numbered steps in this extract (${funnel[0]?.n ?? 0} sessions).`
+          }
+          toolbar={
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Funnel case length">
+              <Toggle pressed={funnelMaxSteps == null} onClick={() => setFunnelMaxSteps(null)}>
+                All cases
+              </Toggle>
+              {stepOptions.map((n) => (
+                <Toggle key={n} pressed={funnelMaxSteps === n} onClick={() => setFunnelMaxSteps(n)}>
+                  {`≤${n} steps`}
+                </Toggle>
+              ))}
+            </div>
+          }
           rows={funnelData.map((r) => ({ label: r.label, values: [`${r.sessions} sessions`, `${r.rate}%`] }))}
         >
           <ResponsiveContainer width="100%" height={240}>
@@ -72,27 +125,40 @@ export function DashboardCharts({ metrics, funnel, durations, weekdays, hours }:
           </ResponsiveContainer>
         </ChartCard>
       ) : null}
-      {durationData.length ? (
-        <ChartCard
-          title="Time to complete or exit"
-          caption="Elapsed time when recorded; otherwise wall-clock from first to last action."
-          rows={durationData.map((r) => ({ label: r.label, values: [`${r.sessions}`] }))}
-        >
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={durationData} margin={{ left: 8, right: 12, top: 8, bottom: 8 }}>
-              <CartesianGrid stroke={PAPER} vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-              <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={36} />
-              <Tooltip />
-              <Bar dataKey="sessions" name="Sessions" fill={COPPER} />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartCard>
-      ) : null}
+
+      <ChartCard
+        title={durationTitle}
+        caption={durationCaption}
+        toolbar={
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Duration outcome">
+            <Toggle pressed={durationMode === "all"} onClick={() => setDurationMode("all")}>
+              Complete or exit
+            </Toggle>
+            <Toggle pressed={durationMode === "completed"} onClick={() => setDurationMode("completed")}>
+              Time to complete
+            </Toggle>
+            <Toggle pressed={durationMode === "exited"} onClick={() => setDurationMode("exited")}>
+              Time to exit
+            </Toggle>
+          </div>
+        }
+        rows={durationData.map((r) => ({ label: r.label, values: [`${r.sessions}`] }))}
+      >
+        <ResponsiveContainer width="100%" height={240}>
+          <BarChart data={durationData} margin={{ left: 8, right: 12, top: 8, bottom: 8 }}>
+            <CartesianGrid stroke={PAPER} vertical={false} />
+            <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={36} />
+            <Tooltip />
+            <Bar dataKey="sessions" name="Sessions" fill={COPPER} />
+          </BarChart>
+        </ResponsiveContainer>
+      </ChartCard>
+
       {weekdayData.length ? (
         <ChartCard
           title="Starts by weekday"
-          caption="Local timezone of this browser, not the learner timezone."
+          caption={tzCaption}
           rows={weekdayData.map((r) => ({ label: r.label, values: [`${r.sessions}`] }))}
         >
           <ResponsiveContainer width="100%" height={240}>
@@ -106,10 +172,11 @@ export function DashboardCharts({ metrics, funnel, durations, weekdays, hours }:
           </ResponsiveContainer>
         </ChartCard>
       ) : null}
+
       {hourData.length ? (
         <ChartCard
           title="Starts by time of day"
-          caption="Local timezone of this browser, not the learner timezone."
+          caption={tzCaption}
           wide={!weekdayData.length}
           rows={hourData.map((r) => ({ label: r.label, values: [`${r.sessions}`] }))}
         >
@@ -128,23 +195,50 @@ export function DashboardCharts({ metrics, funnel, durations, weekdays, hours }:
   );
 }
 
+function Toggle({
+  pressed,
+  onClick,
+  children,
+}: {
+  pressed: boolean;
+  onClick: () => void;
+  children: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed}
+      onClick={onClick}
+      className={[
+        "rounded-sm border px-2 py-1 text-[11px]",
+        pressed ? "border-teal bg-teal text-card" : "border-line bg-paper text-ink hover:border-teal",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
 function ChartCard({
   title,
   caption,
   children,
   wide,
   rows,
+  toolbar,
 }: {
   title: string;
   caption?: string;
   children: ReactNode;
   wide?: boolean;
   rows: Array<{ label: string; values: string[] }>;
+  toolbar?: ReactNode;
 }) {
   return (
     <section className={["border border-line bg-card p-4", wide ? "xl:col-span-2" : ""].join(" ")}>
       <h3 className="font-serif text-lg text-ink">{title}</h3>
       {caption ? <p className="mt-0.5 text-[11px] text-ink-soft">{caption}</p> : null}
+      {toolbar ? <div className="mt-2">{toolbar}</div> : null}
       <div className="mt-2 h-[240px]" aria-hidden>
         {children}
       </div>

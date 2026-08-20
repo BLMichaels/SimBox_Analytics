@@ -83,7 +83,7 @@ function rgbToHex(rgb: [number, number, number]): string {
 }
 
 export function volumeColor(value: number): string {
-  if (value <= 0) return "#00000000";
+  if (value <= 0) return "rgba(0,0,0,0)";
   const stops = VOLUME_STOPS;
   const first = stops[0];
   const last = stops[stops.length - 1];
@@ -133,7 +133,7 @@ const SHARE_STOPS: Array<[number, string]> = [
 ];
 
 export function shareColor(pct: number): string {
-  if (pct <= 0) return "#00000000";
+  if (pct <= 0) return "rgba(0,0,0,0)";
   const stops = SHARE_STOPS;
   const first = stops[0];
   const last = stops[stops.length - 1];

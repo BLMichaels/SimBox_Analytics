@@ -17,10 +17,7 @@ import { useStudyFilters } from "../lib/FilterProvider";
 import {
   compareKpis,
   dash,
-  durationBuckets,
   eventCsvRow,
-  funnelFromSessions,
-  hourMix,
   kpisFromSessions,
   outcomeMix,
   sessionCsvRow,
@@ -31,7 +28,6 @@ import {
   timeOnStep,
   trackingHealth,
   versionMix,
-  weekdayMix,
   type SessionSummary,
 } from "../lib/reporting";
 import { emptyExtract, loadStudyExtract, type StudyExtract } from "../lib/studyExtract";
@@ -68,10 +64,6 @@ export function DashboardPage() {
   const completedSessions = sessions.filter((s) => s.outcome === "completed").length;
   const exitedSessions = sessions.filter((s) => s.outcome === "exited").length;
   const inProgress = sessions.filter((s) => s.outcome === "in_progress").length;
-  const funnel = useMemo(() => funnelFromSessions(sessions), [sessions]);
-  const durations = useMemo(() => durationBuckets(sessions), [sessions]);
-  const weekdays = useMemo(() => weekdayMix(sessions), [sessions]);
-  const hours = useMemo(() => hourMix(sessions), [sessions]);
   const dwell = useMemo(() => timeOnStep(sessions), [sessions]);
   const health = useMemo(() => trackingHealth(sessions), [sessions]);
   const sites = useMemo(() => siteCohorts(sessions), [sessions]);
@@ -221,7 +213,7 @@ export function DashboardPage() {
       </p>
 
       <div className="mb-4">
-        <DashboardCharts metrics={displayMetrics} funnel={funnel} durations={durations} weekdays={weekdays} hours={hours} />
+        <DashboardCharts metrics={displayMetrics} sessions={sessions} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">

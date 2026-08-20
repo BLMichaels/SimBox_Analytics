@@ -220,7 +220,7 @@ function addUsageLayers(map: MapLibreMap) {
     type: "fill",
     source: "regions",
     paint: {
-      "fill-color": ["to-color", ["coalesce", ["get", "color"], "#00000000"]],
+      "fill-color": ["coalesce", ["get", "color"], "rgba(0,0,0,0)"],
       "fill-opacity": 0.82,
     },
   });
@@ -235,7 +235,7 @@ function addUsageLayers(map: MapLibreMap) {
     type: "heatmap",
     source: "points",
     paint: {
-      "heatmap-weight": ["to-number", ["get", "weight"]],
+      "heatmap-weight": ["coalesce", ["get", "weight"], 0],
       "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 2, 1.6, 5, 2.4, 8, 3.2],
       "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 2, 22, 6, 34, 10, 48],
       "heatmap-opacity": 0.9,
@@ -263,8 +263,8 @@ function addUsageLayers(map: MapLibreMap) {
     type: "circle",
     source: "points",
     paint: {
-      "circle-radius": ["to-number", ["get", "radius"]],
-      "circle-color": ["to-color", ["coalesce", ["get", "color"], "#1f6a66"]],
+      "circle-radius": ["coalesce", ["get", "radius"], 10],
+      "circle-color": ["coalesce", ["get", "color"], "#1f6a66"],
       "circle-opacity": 0.88,
       "circle-stroke-width": 1.4,
       "circle-stroke-color": "#fbf8f2",
@@ -279,6 +279,15 @@ function escapeHtml(value: string): string {
   });
 }
 
+function fitToBuckets(map: MapLibreMap, buckets: LocationBucket[], opts: { maxZoom: number; padding: number }) {
+  if (!buckets.length) return;
+  const bounds = new LngLatBounds();
+  for (const b of buckets) {
+    if (Number.isFinite(b.lng) && Number.isFinite(b.lat)) bounds.extend([b.lng, b.lat]);
+  }
+  if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: opts.padding, maxZoom: opts.maxZoom, duration: 700 });
+}
+
 export function UsageMap({ buckets, layer, group, grain, scope, usaLevel, metric, display, onGrainChange }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -286,26 +295,31 @@ export function UsageMap({ buckets, layer, group, grain, scope, usaLevel, metric
   const onGrain = useRef(onGrainChange);
   const scopeRef = useRef(scope);
   const cameraKey = useRef("");
-  const locationFitted = useRef(false);
+  const dataFitKey = useRef("");
+  const propsRef = useRef({ buckets, layer, group, grain, scope, usaLevel, metric, display });
   onGrain.current = onGrainChange;
   scopeRef.current = scope;
+  propsRef.current = { buckets, layer, group, grain, scope, usaLevel, metric, display };
 
   useEffect(() => {
     if (!host.current || mapRef.current) return;
     const map = new MapLibreMap({
       container: host.current,
       style: STYLE,
-      center: [-40, 28],
-      zoom: 1.6,
+      center: [-96, 38],
+      zoom: 3.2,
     });
     map.addControl(new NavigationControl({ showCompass: false }), "top-right");
     map.addControl(new ScaleControl({ maxWidth: 120 }), "bottom-left");
     mapRef.current = map;
     popupRef.current = new Popup({ closeButton: true, maxWidth: "280px" });
 
-    const ready = () => addUsageLayers(map);
-    map.on("load", ready);
-    if (map.isStyleLoaded()) ready();
+    const boot = () => {
+      addUsageLayers(map);
+      void applyLayers(map);
+    };
+    map.on("load", boot);
+    if (map.loaded() || map.isStyleLoaded()) boot();
 
     map.on("zoomend", () => {
       if (scopeRef.current === "usa") return;
@@ -329,8 +343,8 @@ export function UsageMap({ buckets, layer, group, grain, scope, usaLevel, metric
       const sharePct = `${(share * 100).toFixed(share >= 0.01 ? 1 : 2)}%`;
       const isShare = String(p.display ?? "count") === "share";
       const metricLine = isShare
-          ? `${count} session${count === 1 ? "" : "s"} · ${sharePct} of total`
-          : `${Number(p.starts ?? 0)} started · ${Number(p.completions ?? 0)} completed`;
+        ? `${count} session${count === 1 ? "" : "s"} · ${sharePct} of total`
+        : `${Number(p.starts ?? 0)} started · ${Number(p.completions ?? 0)} completed`;
       const html = `<p style="font-weight:600;margin:0 0 4px">${label}</p>
         <p style="margin:0">${metricLine}</p>
         ${cases ? `<p style="margin:6px 0 0">${cases}</p>` : ""}`;
@@ -352,93 +366,101 @@ export function UsageMap({ buckets, layer, group, grain, scope, usaLevel, metric
       map.remove();
       mapRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount once; applyLayers reads propsRef
   }, []);
 
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map?.isStyleLoaded()) {
-      map?.once("load", () => {
-        void apply();
-      });
-      return;
-    }
-    void apply();
+  async function applyLayers(map: MapLibreMap) {
+    const { buckets: pts, layer: lyr, group: grp, grain: gr, scope: sc, usaLevel: level, metric: met, display: disp } =
+      propsRef.current;
+    if (!map.isStyleLoaded()) return;
+    addUsageLayers(map);
+    const points = map.getSource("points") as GeoJSONSource | undefined;
+    const regions = map.getSource("regions") as GeoJSONSource | undefined;
+    if (!points || !regions) return;
 
-    async function apply() {
-      const current = mapRef.current;
-      if (!current) return;
-      if (current.isStyleLoaded()) addUsageLayers(current);
-      const points = current.getSource("points") as GeoJSONSource | undefined;
-      const regions = current.getSource("regions") as GeoJSONSource | undefined;
-      if (!points || !regions) return;
+    const usa = sc === "usa";
+    const regionGrain: MapGrain = usa ? (level === "county" ? "county" : "state") : gr;
+    const showPoints = !usa || level === "location";
+    const showRegions = usa ? level !== "location" : lyr === "regions";
+    const outlineOnly = usa && level === "location";
+    const showHeat = showPoints && lyr === "heatmap" && grp !== "case";
+    const showBubbles =
+      showPoints && (lyr === "bubbles" || grp === "case" || (lyr === "heatmap" && map.getZoom() >= 8));
 
-      const usa = scope === "usa";
-      const regionGrain: MapGrain = usa ? (usaLevel === "county" ? "county" : "state") : grain;
-      const showPoints = !usa || usaLevel === "location";
-      const showRegions = usa ? usaLevel !== "location" : layer === "regions";
-      const outlineOnly = usa && usaLevel === "location";
-      const showHeat = showPoints && layer === "heatmap" && group !== "case";
-      const showBubbles = showPoints && (layer === "bubbles" || group === "case" || (layer === "heatmap" && current.getZoom() >= 8));
+    const collection = bubbleCollection(pts, grp, met, disp);
+    points.setData(collection);
 
-      points.setData(bubbleCollection(buckets, group, metric, display));
-      const loaded = await ensureAtlas(usa ? (usaLevel === "county" ? "county" : "state") : grain === "country" ? "country" : grain);
+    try {
+      const loaded = await ensureAtlas(
+        usa ? (level === "county" ? "county" : "state") : gr === "country" ? "country" : gr,
+      );
       const base =
-        regionGrain === "county"
-          ? loaded.counties
-          : regionGrain === "state"
-            ? loaded.states
-            : loaded.countries;
-      const painted = paintRegions(base?.features ?? [], buckets, regionGrain, metric, display);
+        regionGrain === "county" ? loaded.counties : regionGrain === "state" ? loaded.states : loaded.countries;
+      const painted = paintRegions(base?.features ?? [], pts, regionGrain, met, disp);
       if (outlineOnly) {
         painted.features = painted.features.map((f) => ({
           ...f,
-          properties: { ...f.properties, color: "#00000000", starts: 0, completions: 0, value: 0 },
+          properties: {
+            ...f.properties,
+            color: "rgba(0,0,0,0)",
+            starts: 0,
+            completions: 0,
+            value: 0,
+          },
         }));
       }
       regions.setData(painted);
-
-      current.setLayoutProperty("heat", "visibility", showHeat ? "visible" : "none");
-      current.setLayoutProperty("bubbles", "visibility", showBubbles ? "visible" : "none");
-      current.setLayoutProperty("region-fill", "visibility", showRegions || outlineOnly ? "visible" : "none");
-      current.setLayoutProperty("region-line", "visibility", showRegions || outlineOnly ? "visible" : "none");
-      current.setPaintProperty("region-fill", "fill-opacity", outlineOnly ? 0 : 0.82);
-
-      const nextCamera = `${scope}:${usa ? usaLevel : "world"}`;
-      const switched = cameraKey.current !== nextCamera;
-      if (switched) {
-        cameraKey.current = nextCamera;
-        locationFitted.current = false;
-      }
-      const firstLocationData = usa && usaLevel === "location" && buckets.length > 0 && !locationFitted.current;
-      if (!switched && !firstLocationData) return;
-      if (firstLocationData) locationFitted.current = true;
-      if (usa) {
-        current.setMaxBounds(US_MAX_BOUNDS);
-        const usPoints = buckets.filter((b) => isUnitedStates(b.country));
-        if (usaLevel === "location" && usPoints.length) {
-          const bounds = new LngLatBounds();
-          for (const b of usPoints) bounds.extend([b.lng, b.lat]);
-          if (!bounds.isEmpty()) {
-            current.fitBounds(bounds, { padding: 72, maxZoom: 6.2, duration: 700 });
-            return;
-          }
-        }
-        current.fitBounds(US_CONUS, {
-          padding: usaLevel === "county" ? 28 : 36,
-          maxZoom: usaLevel === "county" ? 5.4 : 4.2,
-          duration: 700,
-        });
-      } else {
-        current.setMaxBounds(null);
-        if (buckets.length) {
-          const bounds = new LngLatBounds();
-          for (const b of buckets) bounds.extend([b.lng, b.lat]);
-          if (!bounds.isEmpty()) current.fitBounds(bounds, { padding: 72, maxZoom: 4.6, duration: 700 });
-        } else {
-          current.easeTo({ center: [-40, 28], zoom: 1.6, duration: 500 });
-        }
-      }
+    } catch {
+      regions.setData({ type: "FeatureCollection", features: [] });
     }
+
+    map.setLayoutProperty("heat", "visibility", showHeat ? "visible" : "none");
+    map.setLayoutProperty("bubbles", "visibility", showBubbles ? "visible" : "none");
+    map.setLayoutProperty("region-fill", "visibility", showRegions || outlineOnly ? "visible" : "none");
+    map.setLayoutProperty("region-line", "visibility", showRegions || outlineOnly ? "visible" : "none");
+    map.setPaintProperty("region-fill", "fill-opacity", outlineOnly ? 0 : 0.82);
+
+    const nextCamera = `${sc}:${usa ? level : "world"}`;
+    const switched = cameraKey.current !== nextCamera;
+    if (switched) {
+      cameraKey.current = nextCamera;
+      dataFitKey.current = "";
+    }
+
+    const dataKey = `${nextCamera}:${pts.length}:${pts[0]?.key ?? ""}:${pts[pts.length - 1]?.key ?? ""}`;
+    const needDataFit = pts.length > 0 && dataFitKey.current !== dataKey && (showPoints || switched);
+    if (!switched && !needDataFit) return;
+    if (needDataFit) dataFitKey.current = dataKey;
+
+    if (usa) {
+      map.setMaxBounds(US_MAX_BOUNDS);
+      const usPoints = pts.filter((b) => isUnitedStates(b.country));
+      if (level === "location" && usPoints.length) {
+        fitToBuckets(map, usPoints, { padding: 72, maxZoom: 6.2 });
+        return;
+      }
+      map.fitBounds(US_CONUS, {
+        padding: level === "county" ? 28 : 36,
+        maxZoom: level === "county" ? 5.4 : 4.2,
+        duration: 700,
+      });
+    } else {
+      map.setMaxBounds(null);
+      if (pts.length) fitToBuckets(map, pts, { padding: 72, maxZoom: 4.6 });
+      else map.easeTo({ center: [-40, 28], zoom: 1.6, duration: 500 });
+    }
+  }
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!map.isStyleLoaded()) {
+      map.once("load", () => {
+        void applyLayers(map);
+      });
+      return;
+    }
+    void applyLayers(map);
   }, [buckets, display, grain, group, layer, metric, scope, usaLevel]);
 
   return <div ref={host} className="usage-map" role="img" aria-label="Usage map" />;

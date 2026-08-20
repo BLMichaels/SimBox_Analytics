@@ -14,16 +14,12 @@ import { formatDuration, formatLocal, formatPercent, formatRange } from "../lib/
 import { useStudyFilters } from "../lib/FilterProvider";
 import {
   dash,
-  durationBuckets,
-  funnelFromSessions,
-  hourMix,
   sessionCsvRow,
   siteCohorts,
   studyBrief,
   tally,
   timeOnStep,
   trackingHealth,
-  weekdayMix,
   type SessionSummary,
 } from "../lib/reporting";
 import { emptyExtract, loadStudyExtract, type StudyExtract } from "../lib/studyExtract";
@@ -62,10 +58,6 @@ export function CasePage() {
   const kpis = extract.metrics.kpis;
   const error = extract.error;
   const completionRate = !kpis.starts ? 0 : Number(kpis.completions) / Number(kpis.starts);
-  const funnel = useMemo(() => funnelFromSessions(sessions), [sessions]);
-  const durations = useMemo(() => durationBuckets(sessions), [sessions]);
-  const weekdays = useMemo(() => weekdayMix(sessions), [sessions]);
-  const hours = useMemo(() => hourMix(sessions), [sessions]);
   const lastStep = useMemo(() => tally(sessions, (s) => s.last_step, "Unknown"), [sessions]);
   const dwell = useMemo(() => timeOnStep(sessions), [sessions]);
   const health = trackingHealth(sessions, caseKey)[0];
@@ -241,7 +233,7 @@ export function CasePage() {
       />
 
       <div className="mt-4">
-        <DashboardCharts metrics={extract.metrics} funnel={funnel} durations={durations} weekdays={weekdays} hours={hours} />
+        <DashboardCharts metrics={extract.metrics} sessions={sessions} />
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-2">

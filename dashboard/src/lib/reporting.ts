@@ -332,8 +332,19 @@ export function eventCsvRow(
   };
 }
 
-export function durationBuckets(sessions: SessionSummary[]): CountRow[] {
-  const timed = sessions.map((s) => sessionWallSeconds(s)).filter((s) => s > 0);
+export type DurationMode = "all" | "completed" | "exited";
+
+export function durationBuckets(
+  sessions: SessionSummary[],
+  mode: DurationMode = "all",
+): CountRow[] {
+  const scoped =
+    mode === "completed"
+      ? sessions.filter((s) => s.outcome === "completed")
+      : mode === "exited"
+        ? sessions.filter((s) => s.outcome === "exited")
+        : sessions;
+  const timed = scoped.map((s) => sessionWallSeconds(s)).filter((s) => s > 0);
   const bins = [
     { label: "Under 2 min", test: (s: number) => s < 120 },
     { label: "2–5 min", test: (s: number) => s >= 120 && s < 300 },
@@ -348,12 +359,50 @@ export function durationBuckets(sessions: SessionSummary[]): CountRow[] {
   });
 }
 
+/** Local weekday (0=Sun) and hour in the session's IP-resolved timezone. */
+export function sessionLocalClock(
+  startedAt: string,
+  timeZone: string | null | undefined,
+): { weekday: number; hour: number; source: "session" | "utc" } {
+  const d = new Date(startedAt);
+  const tz = timeZone?.trim();
+  if (tz) {
+    try {
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: tz,
+        weekday: "short",
+        hour: "numeric",
+        hourCycle: "h23",
+      }).formatToParts(d);
+      const wd = parts.find((p) => p.type === "weekday")?.value ?? "";
+      const hourRaw = parts.find((p) => p.type === "hour")?.value;
+      const weekdayMap: Record<string, number> = {
+        Sun: 0,
+        Mon: 1,
+        Tue: 2,
+        Wed: 3,
+        Thu: 4,
+        Fri: 5,
+        Sat: 6,
+      };
+      const weekday = weekdayMap[wd];
+      const hour = hourRaw != null ? Number(hourRaw) : Number.NaN;
+      if (weekday != null && Number.isFinite(hour)) {
+        return { weekday, hour, source: "session" };
+      }
+    } catch {
+      /* invalid IANA zone */
+    }
+  }
+  return { weekday: d.getUTCDay(), hour: d.getUTCHours(), source: "utc" };
+}
+
 export function weekdayMix(sessions: SessionSummary[]): CountRow[] {
   const names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const counts = names.map((label) => ({ label, n: 0, pct: 0 }));
   for (const session of sessions) {
-    const day = new Date(session.started_at).getDay();
-    const row = counts[day];
+    const { weekday } = sessionLocalClock(session.started_at, session.timezone);
+    const row = counts[weekday];
     if (row) row.n += 1;
   }
   const total = sessions.length || 1;
@@ -369,25 +418,99 @@ export function hourMix(sessions: SessionSummary[]): CountRow[] {
   ];
   const total = sessions.length || 1;
   return bins.map((bin) => {
-    const n = sessions.filter((s) => bin.test(new Date(s.started_at).getHours())).length;
+    const n = sessions.filter((s) => {
+      const { hour } = sessionLocalClock(s.started_at, s.timezone);
+      return bin.test(hour);
+    }).length;
     return { label: bin.label, n, pct: n / total };
   });
 }
 
-export function funnelFromSessions(sessions: SessionSummary[]): CountRow[] {
-  const started = sessions.length;
+export function sessionsWithTimezone(sessions: SessionSummary[]): number {
+  return sessions.filter((s) => {
+    const tz = s.timezone?.trim();
+    if (!tz) return false;
+    try {
+      Intl.DateTimeFormat(undefined, { timeZone: tz });
+      return true;
+    } catch {
+      return false;
+    }
+  }).length;
+}
+
+/** Highest numbered step seen for each case in this extract (from checkpoints/complete). */
+export function caseMaxSteps(sessions: SessionSummary[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const session of sessions) {
+    let max = map.get(session.case_key) ?? 0;
+    for (const event of session.events) {
+      if (
+        event.event_type !== "case_checkpoint" &&
+        event.event_type !== "case_completed" &&
+        event.event_type !== "case_started"
+      ) {
+        continue;
+      }
+      const numbered = metaNumber(event, "step") ?? metaNumber(event, "lastStep");
+      if (numbered != null && Number.isFinite(numbered)) max = Math.max(max, numbered);
+      const [fromLabel] = stepSortKey(stepLine(event));
+      if (Number.isFinite(fromLabel) && fromLabel < Number.POSITIVE_INFINITY) {
+        max = Math.max(max, fromLabel);
+      }
+    }
+    map.set(session.case_key, max);
+  }
+  return map;
+}
+
+export function filterSessionsByCaseMaxSteps(
+  sessions: SessionSummary[],
+  maxSteps: number | null,
+): SessionSummary[] {
+  if (maxSteps == null || maxSteps <= 0) return sessions;
+  const depths = caseMaxSteps(sessions);
+  return sessions.filter((s) => {
+    const depth = depths.get(s.case_key) ?? 0;
+    // Unknown depth (no numbered steps yet) stays in "All" only.
+    return depth > 0 && depth <= maxSteps;
+  });
+}
+
+export function funnelStepOptions(sessions: SessionSummary[]): number[] {
+  const depths = [...caseMaxSteps(sessions).values()].filter((n) => n > 0);
+  if (!depths.length) return [];
+  const max = Math.max(...depths);
+  const opts: number[] = [];
+  for (let n = 3; n <= Math.max(3, max); n++) {
+    if (depths.some((d) => d <= n)) opts.push(n);
+  }
+  return opts;
+}
+
+/**
+ * Progression funnel. When maxCaseSteps is set, only sessions from cases whose
+ * observed step count is ≤ that value are included — so a 3-step case is not
+ * judged against Step 6 from a longer case.
+ */
+export function funnelFromSessions(
+  sessions: SessionSummary[],
+  maxCaseSteps: number | null = null,
+): CountRow[] {
+  const scoped = filterSessionsByCaseMaxSteps(sessions, maxCaseSteps);
+  const started = scoped.length;
   const denom = started || 1;
-  const labels = unionStepLabels(sessions).filter((label) => !/^started$/i.test(label));
+  const labels = unionStepLabels(scoped).filter((label) => !/^started$/i.test(label));
   const rows: CountRow[] = [{ label: "Started", n: started, pct: started / denom }];
   const seen = new Set<string>(["started"]);
   for (const label of labels) {
     const key = label.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    const n = sessions.filter((s) => s.events.some((e) => stepLine(e) === label)).length;
+    const n = scoped.filter((s) => s.events.some((e) => stepLine(e) === label)).length;
     rows.push({ label, n, pct: n / denom });
   }
-  const completed = sessions.filter((s) => s.outcome === "completed").length;
+  const completed = scoped.filter((s) => s.outcome === "completed").length;
   if (!seen.has("completed")) {
     rows.push({ label: "Completed", n: completed, pct: completed / denom });
   }
