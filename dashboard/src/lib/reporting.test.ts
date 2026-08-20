@@ -2,10 +2,15 @@ import { describe, expect, it } from "vitest";
 import type { CaseEventRecord } from "./types";
 import {
   durationBuckets,
+  filterSessionsByMinDuration,
   funnelFromSessions,
   hourMix,
+  kpisFromSessions,
   sessionTimeline,
+  siteCohorts,
+  studyBrief,
   summarizeSessions,
+  timeOnStep,
   unionStepLabels,
   weekdayMix,
 } from "./reporting";
@@ -108,6 +113,58 @@ describe("study insights", () => {
     expect(durationBuckets(sessions).find((r) => r.label === "5–10 min")?.n).toBe(1);
     expect(weekdayMix(sessions).reduce((n, r) => n + r.n, 0)).toBe(2);
     expect(hourMix(sessions).reduce((n, r) => n + r.n, 0)).toBe(2);
+    const dwell = timeOnStep(sessions);
+    expect(dwell.some((r) => r.reached >= 1)).toBe(true);
+    expect(siteCohorts(sessions)[0]?.starts).toBeGreaterThan(0);
+    expect(studyBrief({
+      rangeLabel: "19 Aug 2026 – 19 Aug 2026",
+      sessions,
+      rawCount: sessions.length,
+      minSessionSeconds: 0,
+      truncated: false,
+      fetched: 5,
+      total: 5,
+    })).toMatch(/session/);
+  });
+});
+
+describe("session duration filter", () => {
+  it("filters sessions below a minimum wall-clock length", () => {
+    const rows = [
+      event({
+        id: "1",
+        event_type: "case_started",
+        occurred_at: "2026-08-19T12:00:00.000Z",
+        session_id: "short",
+        metadata: { environment: "production" },
+      }),
+      event({
+        id: "2",
+        event_type: "case_exited",
+        occurred_at: "2026-08-19T12:01:00.000Z",
+        elapsed_seconds: 60,
+        session_id: "short",
+      }),
+      event({
+        id: "3",
+        event_type: "case_started",
+        occurred_at: "2026-08-19T13:00:00.000Z",
+        session_id: "long",
+        metadata: { environment: "production" },
+      }),
+      event({
+        id: "4",
+        event_type: "case_completed",
+        occurred_at: "2026-08-19T13:10:00.000Z",
+        elapsed_seconds: 600,
+        session_id: "long",
+      }),
+    ];
+    const sessions = summarizeSessions(rows);
+    const filtered = filterSessionsByMinDuration(sessions, 300);
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0]?.session_id).toBe("long");
+    expect(kpisFromSessions(filtered).completions).toBe(1);
   });
 });
 

@@ -32,3 +32,7 @@ export function rangeStamp(from: Date, to: Date): string {
     `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
   return `${fmt(from)}-${fmt(to)}`;
 }
+
+export function downloadText(filename: string, body: string): void {
+  trigger(filename, new Blob([body], { type: "text/plain;charset=utf-8" }));
+}

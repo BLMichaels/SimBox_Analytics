@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { callAdminFunction } from "../lib/adminApi";
+import { logAudit, readAuditLog, type AuditEntry } from "../lib/auditLog";
 import { formatLocal } from "../lib/dates";
 import { useAuth } from "../lib/auth";
 
@@ -20,6 +21,7 @@ export function AccessPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [revoke, setRevoke] = useState<AdminRow | null>(null);
+  const [audit, setAudit] = useState<AuditEntry[]>(() => readAuditLog());
 
   const load = useCallback(async () => {
     setError(null);
@@ -47,6 +49,8 @@ export function AccessPage() {
         "admin-manage-access",
         { action: "invite", email, display_name: displayName },
       );
+      logAudit(user?.email ?? "", "invite_admin", email);
+      setAudit(readAuditLog());
       setEmail("");
       setDisplayName("");
       setNotice(
@@ -68,6 +72,8 @@ export function AccessPage() {
     setError(null);
     try {
       await callAdminFunction("admin-manage-access", { action: "revoke", user_id: revoke.user_id });
+      logAudit(user?.email ?? "", "revoke_admin", revoke.email || revoke.user_id);
+      setAudit(readAuditLog());
       setRevoke(null);
       setNotice("Access removed. They can no longer open the dashboard.");
       await load();
@@ -156,6 +162,32 @@ export function AccessPage() {
             );
           })}
         </ul>
+      </section>
+
+      <section className="mt-8 border border-line bg-card">
+        <header className="border-b border-line px-4 py-3">
+          <h2 className="font-serif text-lg text-ink">Action log on this browser</h2>
+          <p className="mt-1 text-[11px] text-ink-soft">
+            Invites, access removals, case changes, and event deletions from this machine. This is a
+            local research trail, not a server-side IRB archive.
+          </p>
+        </header>
+        {audit.length === 0 ? (
+          <p className="px-4 py-6 text-sm text-ink-soft">No local admin actions recorded yet.</p>
+        ) : (
+          <ul className="divide-y divide-line text-sm">
+            {audit.slice(0, 40).map((entry, i) => (
+              <li key={`${entry.at}-${i}`} className="px-4 py-2">
+                <p className="font-medium text-ink">
+                  {entry.action.replaceAll("_", " ")} · {entry.actor}
+                </p>
+                <p className="text-xs text-ink-soft">
+                  {formatLocal(entry.at)} · {entry.detail}
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       {revoke ? (

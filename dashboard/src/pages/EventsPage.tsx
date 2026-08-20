@@ -5,7 +5,10 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DataTable, type Column } from "../components/DataTable";
 import { FilterBar } from "../components/FilterBar";
 import { SessionLink } from "../components/SessionLink";
+import { TruncationNotice } from "../components/TruncationNotice";
 import { callAdminFunction } from "../lib/adminApi";
+import { logAudit } from "../lib/auditLog";
+import { useAuth } from "../lib/auth";
 import { downloadCsv, rangeStamp } from "../lib/csv";
 import { formatDuration, formatLocal } from "../lib/dates";
 import { applyClientFilters, fetchCaseEvents } from "../lib/fetchEvents";
@@ -15,6 +18,8 @@ import {
   eventCsvRow,
   eventLabel,
   eventStamp,
+  filterEventsBySessions,
+  filterSessionsByMinDuration,
   metaString,
   progressionLine,
   sessionWideCsvRow,
@@ -32,8 +37,12 @@ type LogView = "events" | "sessions";
 
 export function EventsPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { filters, setFilters, bounds, cases } = useStudyFilters();
   const [rows, setRows] = useState<CaseEventRecord[]>([]);
+  const [truncated, setTruncated] = useState(false);
+  const [fetchedCount, setFetchedCount] = useState(0);
+  const [eventTotal, setEventTotal] = useState<number | null>(null);
   const [view, setView] = useState<LogView>("events");
   const [selectedEventIds, setSelectedEventIds] = useState<Set<string>>(new Set());
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set());
@@ -62,6 +71,9 @@ export function EventsPage() {
       includeNonProduction: filters.includeNonProduction,
       search: filters.search,
     });
+    setTruncated(fetched.truncated);
+    setFetchedCount(fetched.fetched);
+    setEventTotal(fetched.total);
     setRows(next);
     setSelectedEventIds((prev) => {
       const keep = new Set<string>();
@@ -79,16 +91,22 @@ export function EventsPage() {
 
   useLiveReload(load, !busy);
 
-  const eventRows = useMemo(() => {
-    if (!filters.eventTypes.length) return rows;
-    return rows.filter((r) => filters.eventTypes.includes(r.event_type));
-  }, [filters.eventTypes, rows]);
-
-  const sessions = useMemo(() => {
+  const allSessions = useMemo(() => {
     const grouped = summarizeSessions(rows);
     if (!filters.eventTypes.length) return grouped;
     return grouped.filter((s) => s.events.some((e) => filters.eventTypes.includes(e.event_type)));
   }, [filters.eventTypes, rows]);
+
+  const sessions = useMemo(
+    () => filterSessionsByMinDuration(allSessions, filters.minSessionSeconds),
+    [allSessions, filters.minSessionSeconds],
+  );
+
+  const eventRows = useMemo(() => {
+    let next = !filters.eventTypes.length ? rows : rows.filter((r) => filters.eventTypes.includes(r.event_type));
+    if (filters.minSessionSeconds > 0) next = filterEventsBySessions(next, sessions);
+    return next;
+  }, [filters.eventTypes, filters.minSessionSeconds, rows, sessions]);
 
   const stepLabels = useMemo(() => unionStepLabels(sessions), [sessions]);
 
@@ -239,6 +257,7 @@ export function EventsPage() {
       setNotice(
         `Removed ${deleted} event${deleted === 1 ? "" : "s"}. Those action keys will not be recorded again.`,
       );
+      logAudit(user?.email ?? "", "delete_events", `${deleted} events (${confirm.label})`);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to delete the selected events.");
@@ -340,6 +359,13 @@ export function EventsPage() {
       </div>
 
       <FilterBar cases={cases} filters={filters} onChange={setFilters} showEventFilter showSearch />
+      <TruncationNotice truncated={truncated} fetched={fetchedCount} total={eventTotal} />
+      {filters.minSessionSeconds > 0 ? (
+        <p className="mb-4 text-sm text-ink-soft">
+          Minimum session length: {Math.round(filters.minSessionSeconds / 60)} minutes ({sessions.length} of{" "}
+          {allSessions.length} sessions).
+        </p>
+      ) : null}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <button
           type="button"

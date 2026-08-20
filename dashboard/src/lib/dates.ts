@@ -99,3 +99,9 @@ export function isoDateInput(d: Date): string {
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
+
+/** The equal-length window immediately before `from`. */
+export function previousPeriod(from: Date, to: Date): { from: Date; to: Date } {
+  const span = Math.max(1, to.getTime() - from.getTime());
+  return { from: new Date(from.getTime() - span), to: new Date(from.getTime() - 1) };
+}

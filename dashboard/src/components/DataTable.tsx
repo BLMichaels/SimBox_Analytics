@@ -124,7 +124,12 @@ export function DataTable<T>({
                     }
                   >
                     {col.header}
-                    {sortKey === col.key ? (dir === "asc" ? " ↑" : " ↓") : ""}
+                    {sortKey === col.key ? (
+                      <span aria-hidden>{dir === "asc" ? " ↑" : " ↓"}</span>
+                    ) : null}
+                    {sortKey === col.key ? (
+                      <span className="sr-only">{dir === "asc" ? "sorted ascending" : "sorted descending"}</span>
+                    ) : null}
                   </button>
                 </th>
               ))}
@@ -143,6 +148,17 @@ export function DataTable<T>({
                     onRowClick ? "cursor-pointer hover:bg-paper" : "",
                   ].join(" ")}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
+                  onKeyDown={
+                    onRowClick
+                      ? (e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            onRowClick(row);
+                          }
+                        }
+                      : undefined
+                  }
+                  tabIndex={onRowClick ? 0 : undefined}
                 >
                   {selectable ? (
                     <td className="px-3 py-2 align-top">

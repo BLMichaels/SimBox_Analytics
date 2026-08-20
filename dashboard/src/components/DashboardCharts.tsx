@@ -39,7 +39,11 @@ export function DashboardCharts({ metrics, funnel, durations, weekdays, hours }:
 
   return (
     <div className="grid gap-4 xl:grid-cols-2">
-      <ChartCard title="Daily starts and completions" caption="UTC calendar days. Completions may land on a later day than the start.">
+      <ChartCard
+        title="Daily starts and completions"
+        caption="UTC calendar day of session start. Completions are counted on the start day."
+        rows={daily.map((d) => ({ label: d.day, values: [`${d.starts} starts`, `${d.completions} completed`] }))}
+      >
         <ResponsiveContainer width="100%" height={240}>
           <LineChart data={daily} margin={{ left: 8, right: 12, top: 8, bottom: 8 }}>
             <CartesianGrid stroke={PAPER} vertical={false} />
@@ -52,7 +56,11 @@ export function DashboardCharts({ metrics, funnel, durations, weekdays, hours }:
         </ResponsiveContainer>
       </ChartCard>
       {funnelData.length ? (
-        <ChartCard title="Progression funnel" caption="Sessions that reached each recorded step in this range.">
+        <ChartCard
+          title="Progression funnel"
+          caption="Sessions that reached each recorded step in this range."
+          rows={funnelData.map((r) => ({ label: r.label, values: [`${r.sessions} sessions`, `${r.rate}%`] }))}
+        >
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={funnelData} margin={{ left: 8, right: 12, top: 8, bottom: 8 }}>
               <CartesianGrid stroke={PAPER} vertical={false} />
@@ -65,7 +73,11 @@ export function DashboardCharts({ metrics, funnel, durations, weekdays, hours }:
         </ChartCard>
       ) : null}
       {durationData.length ? (
-        <ChartCard title="Time to complete or exit" caption="Elapsed time on sessions that recorded a duration.">
+        <ChartCard
+          title="Time to complete or exit"
+          caption="Elapsed time when recorded; otherwise wall-clock from first to last action."
+          rows={durationData.map((r) => ({ label: r.label, values: [`${r.sessions}`] }))}
+        >
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={durationData} margin={{ left: 8, right: 12, top: 8, bottom: 8 }}>
               <CartesianGrid stroke={PAPER} vertical={false} />
@@ -78,7 +90,11 @@ export function DashboardCharts({ metrics, funnel, durations, weekdays, hours }:
         </ChartCard>
       ) : null}
       {weekdayData.length ? (
-        <ChartCard title="Starts by weekday" caption="Local timezone of this browser.">
+        <ChartCard
+          title="Starts by weekday"
+          caption="Local timezone of this browser, not the learner timezone."
+          rows={weekdayData.map((r) => ({ label: r.label, values: [`${r.sessions}`] }))}
+        >
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={weekdayData} margin={{ left: 8, right: 12, top: 8, bottom: 8 }}>
               <CartesianGrid stroke={PAPER} vertical={false} />
@@ -91,7 +107,12 @@ export function DashboardCharts({ metrics, funnel, durations, weekdays, hours }:
         </ChartCard>
       ) : null}
       {hourData.length ? (
-        <ChartCard title="Starts by time of day" caption="Local timezone of this browser." wide={!weekdayData.length}>
+        <ChartCard
+          title="Starts by time of day"
+          caption="Local timezone of this browser, not the learner timezone."
+          wide={!weekdayData.length}
+          rows={hourData.map((r) => ({ label: r.label, values: [`${r.sessions}`] }))}
+        >
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={hourData} margin={{ left: 8, right: 12, top: 8, bottom: 8 }}>
               <CartesianGrid stroke={PAPER} vertical={false} />
@@ -112,17 +133,41 @@ function ChartCard({
   caption,
   children,
   wide,
+  rows,
 }: {
   title: string;
   caption?: string;
   children: ReactNode;
   wide?: boolean;
+  rows: Array<{ label: string; values: string[] }>;
 }) {
   return (
     <section className={["border border-line bg-card p-4", wide ? "xl:col-span-2" : ""].join(" ")}>
       <h3 className="font-serif text-lg text-ink">{title}</h3>
       {caption ? <p className="mt-0.5 text-[11px] text-ink-soft">{caption}</p> : null}
-      <div className="mt-2 h-[240px]">{children}</div>
+      <div className="mt-2 h-[240px]" aria-hidden>
+        {children}
+      </div>
+      <details className="mt-2">
+        <summary className="cursor-pointer text-[11px] text-ink-soft">Data table</summary>
+        <table className="mt-2 min-w-full text-left text-xs">
+          <caption className="sr-only">{title}</caption>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.label} className="border-t border-line">
+                <th scope="row" className="py-1 pr-3 font-medium">
+                  {row.label}
+                </th>
+                {row.values.map((v) => (
+                  <td key={v} className="py-1 font-mono tabular-nums">
+                    {v}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
     </section>
   );
 }

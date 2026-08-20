@@ -12,8 +12,16 @@ import {
   isUnitedStates,
   normName,
 } from "../lib/geo";
-import type { LocationBucket, MapGrain, MapGroup, MapLayer, MapMetric, MapScope, UsaLevel } from "../lib/mapData";
-import { caseColors, pointsGeoJSON, volumeColor, volumeRadius, volumeWeight } from "../lib/mapData";
+import type { LocationBucket, MapDisplay, MapGrain, MapGroup, MapLayer, MapMetric, MapScope, UsaLevel } from "../lib/mapData";
+import {
+  bucketVisual,
+  bucketsMetricTotal,
+  caseColors,
+  caseMetricTotal,
+  pointsGeoJSON,
+  shareColor,
+  volumeColor,
+} from "../lib/mapData";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 type Props = {
@@ -24,6 +32,7 @@ type Props = {
   scope: MapScope;
   usaLevel: UsaLevel;
   metric: MapMetric;
+  display: MapDisplay;
   onGrainChange: (grain: MapGrain) => void;
 };
 
@@ -95,6 +104,7 @@ function paintRegions(
   buckets: LocationBucket[],
   grain: MapGrain,
   metric: MapMetric,
+  display: MapDisplay,
 ): GeoJSON.FeatureCollection {
   const counts = new Map<string, { starts: number; completions: number }>();
   const add = (name: string, b: LocationBucket) => {
@@ -117,6 +127,8 @@ function paintRegions(
     }
   }
 
+  const total = bucketsMetricTotal(buckets, metric);
+
   return {
     type: "FeatureCollection",
     features: features.map((f) => {
@@ -133,7 +145,8 @@ function paintRegions(
         counts.get(String(f.id ?? ""));
       const starts = stat?.starts ?? 0;
       const completions = stat?.completions ?? 0;
-      const value = metric === "completed" ? completions : starts;
+      const count = metric === "completed" ? completions : starts;
+      const visual = bucketVisual(count, total, display);
       return {
         ...f,
         properties: {
@@ -141,13 +154,61 @@ function paintRegions(
           label: featureName(f),
           starts,
           completions,
-          value,
-          color: volumeColor(value),
+          count,
+          share: visual.share,
+          value: visual.value,
+          display,
+          color: visual.color,
           rate: starts ? completions / starts : 0,
         },
       };
     }),
   };
+}
+
+function bubbleCollection(
+  buckets: LocationBucket[],
+  group: MapGroup,
+  metric: MapMetric,
+  display: MapDisplay,
+): GeoJSON.FeatureCollection {
+  if (group !== "case") return pointsGeoJSON(buckets, metric, display);
+  const colors = caseColors(
+    [...new Set(buckets.flatMap((b) => Object.values(b.cases).map((c) => c.name)))].sort(),
+  );
+  const total = caseMetricTotal(buckets, metric);
+  const features: GeoJSON.Feature[] = [];
+  for (const b of buckets) {
+    const entries = Object.values(b.cases);
+    entries.forEach((c, i) => {
+      const offset = (i - (entries.length - 1) / 2) * 0.08;
+      const count = metric === "completed" ? c.completions : c.n;
+      const visual = bucketVisual(count, total, display);
+      features.push({
+        type: "Feature",
+        properties: {
+          key: `${b.key}:${c.name}`,
+          label: `${c.name} · ${b.label}`,
+          starts: c.n,
+          completions: c.completions,
+          count,
+          share: visual.share,
+          value: visual.value,
+          display,
+          weight: visual.weight,
+          radius: visual.radius,
+          color: colors[c.name] ?? (display === "share" ? shareColor(visual.value) : volumeColor(count)),
+          rate: c.n ? c.completions / c.n : 0,
+          city: b.city,
+          region: b.region,
+          country: b.country,
+          cases: c.name,
+        },
+        geometry: { type: "Point", coordinates: [b.lng + offset, b.lat] },
+      });
+    });
+  }
+  return { type: "FeatureCollection", features };
 }
 
 function addUsageLayers(map: MapLibreMap) {
@@ -211,41 +272,6 @@ function addUsageLayers(map: MapLibreMap) {
   });
 }
 
-function bubbleCollection(buckets: LocationBucket[], group: MapGroup, metric: MapMetric): GeoJSON.FeatureCollection {
-  if (group !== "case") return pointsGeoJSON(buckets, metric);
-  const colors = caseColors(
-    [...new Set(buckets.flatMap((b) => Object.values(b.cases).map((c) => c.name)))].sort(),
-  );
-  const features: GeoJSON.Feature[] = [];
-  for (const b of buckets) {
-    const entries = Object.values(b.cases);
-    entries.forEach((c, i) => {
-      const offset = (i - (entries.length - 1) / 2) * 0.08;
-      const value = metric === "completed" ? c.completions : c.n;
-      features.push({
-        type: "Feature",
-        properties: {
-          key: `${b.key}:${c.name}`,
-          label: `${c.name} · ${b.label}`,
-          starts: c.n,
-          completions: c.completions,
-          value,
-          weight: volumeWeight(value),
-          radius: volumeRadius(value),
-          color: colors[c.name] ?? volumeColor(value),
-          rate: c.n ? c.completions / c.n : 0,
-          city: b.city,
-          region: b.region,
-          country: b.country,
-          cases: c.name,
-        },
-        geometry: { type: "Point", coordinates: [b.lng + offset, b.lat] },
-      });
-    });
-  }
-  return { type: "FeatureCollection", features };
-}
-
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (ch) => {
     const map: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
@@ -253,7 +279,7 @@ function escapeHtml(value: string): string {
   });
 }
 
-export function UsageMap({ buckets, layer, group, grain, scope, usaLevel, metric, onGrainChange }: Props) {
+export function UsageMap({ buckets, layer, group, grain, scope, usaLevel, metric, display, onGrainChange }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const popupRef = useRef<Popup | null>(null);
@@ -298,8 +324,15 @@ export function UsageMap({ buckets, layer, group, grain, scope, usaLevel, metric
       const p = feat.properties;
       const label = escapeHtml(String(p.label ?? ""));
       const cases = escapeHtml(String(p.cases ?? ""));
+      const count = Number(p.count ?? p.starts ?? 0);
+      const share = Number(p.share ?? 0);
+      const sharePct = `${(share * 100).toFixed(share >= 0.01 ? 1 : 2)}%`;
+      const isShare = String(p.display ?? "count") === "share";
+      const metricLine = isShare
+          ? `${count} session${count === 1 ? "" : "s"} · ${sharePct} of total`
+          : `${Number(p.starts ?? 0)} started · ${Number(p.completions ?? 0)} completed`;
       const html = `<p style="font-weight:600;margin:0 0 4px">${label}</p>
-        <p style="margin:0">${Number(p.starts ?? 0)} started · ${Number(p.completions ?? 0)} completed</p>
+        <p style="margin:0">${metricLine}</p>
         ${cases ? `<p style="margin:6px 0 0">${cases}</p>` : ""}`;
       popupRef.current?.setLngLat(e.lngLat).setHTML(html).addTo(map);
     };
@@ -347,7 +380,7 @@ export function UsageMap({ buckets, layer, group, grain, scope, usaLevel, metric
       const showHeat = showPoints && layer === "heatmap" && group !== "case";
       const showBubbles = showPoints && (layer === "bubbles" || group === "case" || (layer === "heatmap" && current.getZoom() >= 8));
 
-      points.setData(bubbleCollection(buckets, group, metric));
+      points.setData(bubbleCollection(buckets, group, metric, display));
       const loaded = await ensureAtlas(usa ? (usaLevel === "county" ? "county" : "state") : grain === "country" ? "country" : grain);
       const base =
         regionGrain === "county"
@@ -355,7 +388,7 @@ export function UsageMap({ buckets, layer, group, grain, scope, usaLevel, metric
           : regionGrain === "state"
             ? loaded.states
             : loaded.countries;
-      const painted = paintRegions(base?.features ?? [], buckets, regionGrain, metric);
+      const painted = paintRegions(base?.features ?? [], buckets, regionGrain, metric, display);
       if (outlineOnly) {
         painted.features = painted.features.map((f) => ({
           ...f,
@@ -406,7 +439,7 @@ export function UsageMap({ buckets, layer, group, grain, scope, usaLevel, metric
         }
       }
     }
-  }, [buckets, grain, group, layer, metric, scope, usaLevel]);
+  }, [buckets, display, grain, group, layer, metric, scope, usaLevel]);
 
   return <div ref={host} className="usage-map" role="img" aria-label="Usage map" />;
 }

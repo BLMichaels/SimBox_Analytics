@@ -5,7 +5,7 @@ import { supabase } from "./supabase";
 export function useLiveReload(reload: () => void, enabled = true) {
   useEffect(() => {
     if (!enabled) return;
-    const interval = window.setInterval(reload, 4000);
+    const interval = window.setInterval(reload, 30000);
     const channel = supabase
       .channel("case_events_live")
       .on(

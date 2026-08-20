@@ -32,11 +32,12 @@ export function HelpPage() {
           block so <code className="font-mono">SimBoxTracking</code> exists before the player runs.
         </li>
         <li>
-          <strong>Ensure Storyline start/end triggers call the expected functions.</strong> For
-          Penetrating Trauma, do <em>not</em> reuse the existing countdown scripts. In Storyline,
-          add Execute JavaScript on the Intro slide: <code className="font-mono">SimBoxTracking.start();</code> and
-          on Debrief &amp; Feedback: <code className="font-mono">SimBoxTracking.complete();</code> then republish.
-          Exit is handled automatically on <code className="font-mono">pagehide</code>.
+          <strong>Ensure Storyline start, checkpoints, and complete fire.</strong> Add Execute JavaScript
+          on Intro: <code className="font-mono">SimBoxTracking.start();</code> and on Debrief:{" "}
+          <code className="font-mono">SimBoxTracking.complete();</code>. For step-level funnels, also
+          copy <code className="font-mono">simbox-case-hooks.js</code> into the case repo and load it after
+          the tracking script, or call <code className="font-mono">SimBoxTracking.checkpoint()</code> on each
+          numbered slide. Exit is handled on <code className="font-mono">pagehide</code>.
         </li>
         <li>
           <strong>Add the case on the Cases page</strong> with the same <code className="font-mono">case_key</code> as
@@ -76,6 +77,30 @@ export function HelpPage() {
         Events recorded before locality lookup was enabled will show “Not resolved” until new sessions arrive.
         The Map page can show the world or a locked United States view (states, counties, or city-level locations).
       </p>
+
+      <h2 className="font-serif mt-10 text-2xl text-ink">How counts and duration work</h2>
+      <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6">
+        <li>
+          Overview, Map, Events, and Cases all use the same <strong>session-level</strong> extract: one
+          anonymous browser tab is one start. Completions are sessions that reached <code className="font-mono">case_completed</code>.
+        </li>
+        <li>
+          Duration prefers the reported <code className="font-mono">elapsed_seconds</code>. If that is missing, we use
+          wall-clock from the first action to the last. Ingest caps elapsed at 12 hours.
+        </li>
+        <li>
+          Minimum session length hides quick click-throughs. Export a study packet from Overview for an
+          IRB-style note of filters, row counts, and truncation.
+        </li>
+        <li>
+          If a date range is very large, a banner appears when not every event could be loaded. Narrow
+          the period so numbers stay complete.
+        </li>
+        <li>
+          Tracking health on Cases flags missing checkpoints or unresolved geography. Funnel and time-on-step
+          reports need checkpoints wired in the published case.
+        </li>
+      </ul>
 
       <h2 className="font-serif mt-10 text-2xl text-ink">Inviting colleagues</h2>
       <p className="mt-2 text-sm leading-6 text-ink-soft">

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { canonicalCountry, canonicalState, countyKey, isUnitedStates, pointInCoords } from "./geo";
-import { bucketLocations, bucketsForScope, sessionsForMetric, volumeColor, type LocationBucket } from "./mapData";
+import { bucketLocations, bucketsForScope, bucketVisual, sessionsForMetric, volumeColor, type LocationBucket } from "./mapData";
 import type { SessionSummary } from "./reporting";
 
 describe("geo names", () => {
@@ -55,5 +55,13 @@ describe("map buckets", () => {
     expect(bucketsForScope(mixed, "usa")).toHaveLength(1);
     expect(volumeColor(1)).not.toBe(volumeColor(8));
     expect(volumeColor(8)).toBe("#9a4f2c");
+  });
+
+  it("computes share visuals as a percentage of the visible total", () => {
+    const countVisual = bucketVisual(2, 10, "count");
+    const shareVisual = bucketVisual(2, 10, "share");
+    expect(countVisual.value).toBe(2);
+    expect(shareVisual.value).toBeCloseTo(20);
+    expect(shareVisual.share).toBeCloseTo(0.2);
   });
 });

@@ -8,6 +8,7 @@ import {
 import type { SessionSummary } from "./reporting";
 
 export type MapMetric = "started" | "completed";
+export type MapDisplay = "count" | "share";
 export type MapLayer = "heatmap" | "bubbles" | "regions";
 export type MapGrain = "country" | "state" | "county";
 export type MapGroup = "overall" | "case";
@@ -21,6 +22,46 @@ export function bucketsForScope(buckets: LocationBucket[], scope: MapScope): Loc
 
 export function bucketValue(bucket: LocationBucket, metric: MapMetric): number {
   return metric === "completed" ? bucket.completions : bucket.starts;
+}
+
+export function bucketsMetricTotal(buckets: LocationBucket[], metric: MapMetric): number {
+  return buckets.reduce((n, b) => n + bucketValue(b, metric), 0);
+}
+
+export function caseMetricTotal(buckets: LocationBucket[], metric: MapMetric): number {
+  let total = 0;
+  for (const b of buckets) {
+    for (const c of Object.values(b.cases)) {
+      total += metric === "completed" ? c.completions : c.n;
+    }
+  }
+  return total;
+}
+
+export type BucketVisual = {
+  count: number;
+  share: number;
+  value: number;
+  color: string;
+  weight: number;
+  radius: number;
+};
+
+export function bucketVisual(
+  count: number,
+  total: number,
+  display: MapDisplay,
+): BucketVisual {
+  const share = total > 0 ? count / total : 0;
+  const value = display === "share" ? share * 100 : count;
+  return {
+    count,
+    share,
+    value,
+    color: display === "share" ? shareColor(value) : volumeColor(count),
+    weight: display === "share" ? shareWeight(share) : volumeWeight(count),
+    radius: display === "share" ? shareRadius(share, total) : volumeRadius(count),
+  };
 }
 
 /** Absolute volume ramp so 1 vs 2 vs 5 sessions is visible even with sparse data. */
@@ -79,6 +120,57 @@ export const VOLUME_LEGEND = [
   { label: "4", color: volumeColor(4) },
   { label: "8", color: volumeColor(8) },
   { label: "16+", color: volumeColor(16) },
+];
+
+/** Share-of-total ramp (percentage points). */
+const SHARE_STOPS: Array<[number, string]> = [
+  [0.5, "#8fbfba"],
+  [1, "#1f6a66"],
+  [2, "#5a8f6a"],
+  [5, "#c4a35a"],
+  [10, "#9a4f2c"],
+  [25, "#8f2d2d"],
+];
+
+export function shareColor(pct: number): string {
+  if (pct <= 0) return "#00000000";
+  const stops = SHARE_STOPS;
+  const first = stops[0];
+  const last = stops[stops.length - 1];
+  if (!first || !last) return "#1f6a66";
+  if (pct <= first[0]) return first[1];
+  if (pct >= last[0]) return last[1];
+  for (let i = 1; i < stops.length; i++) {
+    const prev = stops[i - 1];
+    const next = stops[i];
+    if (!prev || !next) continue;
+    if (pct <= next[0]) {
+      const t = (pct - prev[0]) / (next[0] - prev[0]);
+      const a = hexToRgb(prev[1]);
+      const b = hexToRgb(next[1]);
+      return rgbToHex([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]);
+    }
+  }
+  return last[1];
+}
+
+export function shareWeight(share: number): number {
+  if (share <= 0) return 0;
+  return Math.min(1, 0.35 + share * 6);
+}
+
+export function shareRadius(share: number, total: number): number {
+  if (share <= 0) return 0;
+  const equiv = Math.max(1, share * total);
+  return 8 + Math.min(22, Math.log2(equiv + 1) * 7);
+}
+
+export const SHARE_LEGEND = [
+  { label: "<1%", color: shareColor(0.5) },
+  { label: "1%", color: shareColor(1) },
+  { label: "2%", color: shareColor(2) },
+  { label: "5%", color: shareColor(5) },
+  { label: "10%+", color: shareColor(10) },
 ];
 
 export type PlacedSession = SessionSummary & {
@@ -227,11 +319,18 @@ export function bucketLocations(placed: PlacedSession[]): LocationBucket[] {
   return [...map.values()].sort((a, b) => b.starts - a.starts);
 }
 
-export function pointsGeoJSON(buckets: LocationBucket[], metric: MapMetric = "started"): GeoJSON.FeatureCollection {
+export function pointsGeoJSON(
+  buckets: LocationBucket[],
+  metric: MapMetric = "started",
+  display: MapDisplay = "count",
+  total?: number,
+): GeoJSON.FeatureCollection {
+  const denom = total ?? bucketsMetricTotal(buckets, metric);
   return {
     type: "FeatureCollection",
     features: buckets.map((b) => {
-      const value = bucketValue(b, metric);
+      const count = bucketValue(b, metric);
+      const visual = bucketVisual(count, denom, display);
       return {
         type: "Feature",
         properties: {
@@ -239,10 +338,13 @@ export function pointsGeoJSON(buckets: LocationBucket[], metric: MapMetric = "st
           label: b.label,
           starts: b.starts,
           completions: b.completions,
-          value,
-          weight: volumeWeight(value),
-          radius: volumeRadius(value),
-          color: volumeColor(value),
+          count,
+          share: visual.share,
+          value: visual.value,
+          display,
+          weight: visual.weight,
+          radius: visual.radius,
+          color: visual.color,
           rate: b.starts ? b.completions / b.starts : 0,
           city: b.city,
           region: b.region,

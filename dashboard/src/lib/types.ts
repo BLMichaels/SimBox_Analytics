@@ -90,4 +90,6 @@ export type Filters = {
   deviceTypes: DeviceType[];
   search: string;
   includeNonProduction: boolean;
+  /** Minimum session length in seconds; 0 = no minimum. */
+  minSessionSeconds: number;
 };

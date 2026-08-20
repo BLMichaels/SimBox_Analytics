@@ -1,5 +1,5 @@
-import { formatLocal } from "./dates";
-import type { CaseEventRecord } from "./types";
+import { formatDuration, formatLocal } from "./dates";
+import type { CaseEventRecord, DashboardMetrics } from "./types";
 
 export function metaString(row: CaseEventRecord, key: string): string {
   const v = row.metadata?.[key];
@@ -103,6 +103,7 @@ export type SessionSummary = {
   access: string;
   device: string;
   environment: string;
+  app_version: string;
   latitude: number | null;
   longitude: number | null;
   events: CaseEventRecord[];
@@ -195,6 +196,7 @@ export function summarizeSessions(rows: CaseEventRecord[]): SessionSummary[] {
       access: accessLabel(first.delivery_context),
       device: first.device_type ?? "unknown",
       environment: metaString(first, "environment") || "production",
+      app_version: first.app_version || last.app_version || "",
       latitude: coords.latitude,
       longitude: coords.longitude,
       events: ordered,
@@ -298,6 +300,7 @@ export function sessionCsvRow(s: SessionSummary): Record<string, string | number
     access: s.access,
     device: s.device,
     environment: s.environment,
+    app_version: s.app_version,
   };
 }
 
@@ -330,7 +333,7 @@ export function eventCsvRow(
 }
 
 export function durationBuckets(sessions: SessionSummary[]): CountRow[] {
-  const timed = sessions.filter((s) => s.elapsed_seconds != null);
+  const timed = sessions.map((s) => sessionWallSeconds(s)).filter((s) => s > 0);
   const bins = [
     { label: "Under 2 min", test: (s: number) => s < 120 },
     { label: "2–5 min", test: (s: number) => s >= 120 && s < 300 },
@@ -340,7 +343,7 @@ export function durationBuckets(sessions: SessionSummary[]): CountRow[] {
   ];
   const total = timed.length || 1;
   return bins.map((bin) => {
-    const n = timed.filter((s) => bin.test(s.elapsed_seconds ?? 0)).length;
+    const n = timed.filter((s) => bin.test(s)).length;
     return { label: bin.label, n, pct: n / total };
   });
 }
@@ -393,4 +396,363 @@ export function funnelFromSessions(sessions: SessionSummary[]): CountRow[] {
 
 export function outcomeMix(sessions: SessionSummary[]): CountRow[] {
   return tally(sessions, (s) => outcomeLabel(s.outcome));
+}
+
+/** Wall-clock or reported elapsed seconds for a session (start → last action). */
+export function sessionWallSeconds(s: SessionSummary): number {
+  if (s.elapsed_seconds != null && Number.isFinite(s.elapsed_seconds)) {
+    return Math.max(0, s.elapsed_seconds);
+  }
+  const ms = Date.parse(s.ended_at) - Date.parse(s.started_at);
+  return Number.isFinite(ms) ? Math.max(0, Math.round(ms / 1000)) : 0;
+}
+
+export function filterSessionsByMinDuration(
+  sessions: SessionSummary[],
+  minSeconds: number,
+): SessionSummary[] {
+  if (!minSeconds || minSeconds <= 0) return sessions;
+  return sessions.filter((s) => sessionWallSeconds(s) >= minSeconds);
+}
+
+export function filterEventsBySessions(
+  events: CaseEventRecord[],
+  sessions: SessionSummary[],
+): CaseEventRecord[] {
+  const ids = new Set(sessions.map((s) => s.session_id));
+  return events.filter((e) => ids.has(e.session_id));
+}
+
+function median(values: number[]): number | null {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
+export function kpisFromSessions(sessions: SessionSummary[]): {
+  starts: number;
+  completions: number;
+  exits: number;
+  unique_sessions: number;
+  active_cases: number;
+  avg_completion_seconds: number | null;
+  median_completion_seconds: number | null;
+} {
+  const starts = sessions.length;
+  const completions = sessions.filter((s) => s.outcome === "completed").length;
+  const exits = sessions.filter((s) => s.outcome === "exited").length;
+  const caseKeys = new Set(sessions.map((s) => s.case_key));
+  const completedDurations = sessions
+    .filter((s) => s.outcome === "completed")
+    .map((s) => sessionWallSeconds(s));
+  const sum = completedDurations.reduce((a, b) => a + b, 0);
+  return {
+    starts,
+    completions,
+    exits,
+    unique_sessions: starts,
+    active_cases: caseKeys.size,
+    avg_completion_seconds: completedDurations.length ? sum / completedDurations.length : null,
+    median_completion_seconds: median(completedDurations),
+  };
+}
+
+export function dailyFromSessions(sessions: SessionSummary[]): Array<{
+  day_utc: string;
+  starts: number;
+  completions: number;
+}> {
+  const map = new Map<string, { starts: number; completions: number }>();
+  for (const s of sessions) {
+    const day = `${s.started_at.slice(0, 10)}T00:00:00.000Z`;
+    const cur = map.get(day) ?? { starts: 0, completions: 0 };
+    cur.starts += 1;
+    if (s.outcome === "completed") cur.completions += 1;
+    map.set(day, cur);
+  }
+  return [...map.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([day_utc, v]) => ({ day_utc, starts: v.starts, completions: v.completions }));
+}
+
+export function byCaseFromSessions(sessions: SessionSummary[]): Array<{
+  id: string;
+  case_key: string;
+  display_name: string;
+  starts: number;
+  completions: number;
+  completion_rate: number;
+}> {
+  const map = new Map<
+    string,
+    { case_key: string; display_name: string; starts: number; completions: number }
+  >();
+  for (const s of sessions) {
+    const cur = map.get(s.case_key) ?? {
+      case_key: s.case_key,
+      display_name: s.case_name,
+      starts: 0,
+      completions: 0,
+    };
+    cur.starts += 1;
+    if (s.outcome === "completed") cur.completions += 1;
+    map.set(s.case_key, cur);
+  }
+  return [...map.values()]
+    .sort((a, b) => b.starts - a.starts)
+    .map((c) => ({
+      id: c.case_key,
+      case_key: c.case_key,
+      display_name: c.display_name,
+      starts: c.starts,
+      completions: c.completions,
+      completion_rate: c.starts ? c.completions / c.starts : 0,
+    }));
+}
+
+export function metricsFromSessions(sessions: SessionSummary[]): DashboardMetrics {
+  const funnel = funnelFromSessions(sessions);
+  return {
+    kpis: kpisFromSessions(sessions),
+    daily: dailyFromSessions(sessions),
+    by_case: byCaseFromSessions(sessions),
+    by_delivery: tally(sessions, (s) => s.access, "Unknown").map((r) => ({ key: r.label, n: r.n })),
+    by_device: tally(sessions, (s) => s.device, "unknown").map((r) => ({ key: r.label, n: r.n })),
+    by_step: funnel
+      .filter((r) => r.label !== "Started")
+      .map((r, i) => ({ step: i + 1, label: r.label, sessions: r.n })),
+  };
+}
+
+export type StepDwell = {
+  label: string;
+  reached: number;
+  avgSeconds: number | null;
+  medianSeconds: number | null;
+  dropoff: number;
+  pct: number;
+};
+
+export function timeOnStep(sessions: SessionSummary[]): StepDwell[] {
+  const labels = unionStepLabels(sessions).filter((label) => !/^started$/i.test(label));
+  const denom = sessions.length || 1;
+  return labels.map((label) => {
+    const dwells: number[] = [];
+    let reached = 0;
+    let dropoff = 0;
+    for (const session of sessions) {
+      const timeline = sessionTimeline(session.events);
+      const hit = timeline.find((step) => stepLine(step.event) === label);
+      if (!hit) continue;
+      reached += 1;
+      const next = timeline[hit.index + 1];
+      if (next) dwells.push(next.deltaSec);
+      const isLastMeaningful =
+        session.last_step === label && session.outcome !== "completed";
+      if (isLastMeaningful) dropoff += 1;
+    }
+    return {
+      label,
+      reached,
+      avgSeconds: dwells.length ? dwells.reduce((a, b) => a + b, 0) / dwells.length : null,
+      medianSeconds: median(dwells),
+      dropoff,
+      pct: reached / denom,
+    };
+  });
+}
+
+export type TrackingHealth = {
+  case_key: string;
+  display_name: string;
+  sessions: number;
+  withCheckpoints: number;
+  checkpointRate: number;
+  locatable: number;
+  locatableRate: number;
+  lastStarted: string | null;
+  status: "ok" | "sparse" | "silent";
+};
+
+export function trackingHealth(sessions: SessionSummary[], caseKey?: string): TrackingHealth[] {
+  const grouped = new Map<string, SessionSummary[]>();
+  for (const s of sessions) {
+    if (caseKey && s.case_key !== caseKey) continue;
+    const list = grouped.get(s.case_key) ?? [];
+    list.push(s);
+    grouped.set(s.case_key, list);
+  }
+  return [...grouped.entries()]
+    .map(([key, list]) => {
+      const withCheckpoints = list.filter((s) => s.checkpoint_count > 0).length;
+      const locatable = list.filter((s) => s.location !== "Not resolved").length;
+      const checkpointRate = list.length ? withCheckpoints / list.length : 0;
+      const locatableRate = list.length ? locatable / list.length : 0;
+      let status: TrackingHealth["status"] = "ok";
+      if (list.length === 0) status = "silent";
+      else if (checkpointRate < 0.25 || locatableRate < 0.3) status = "sparse";
+      return {
+        case_key: key,
+        display_name: list[0]?.case_name ?? key,
+        sessions: list.length,
+        withCheckpoints,
+        checkpointRate,
+        locatable,
+        locatableRate,
+        lastStarted: list[0]?.started_at ?? null,
+        status,
+      };
+    })
+    .sort((a, b) => b.sessions - a.sessions);
+}
+
+export type SiteCohort = {
+  label: string;
+  starts: number;
+  completions: number;
+  completion_rate: number;
+  median_seconds: number | null;
+  with_checkpoints: number;
+  pct: number;
+};
+
+export function siteCohorts(sessions: SessionSummary[]): SiteCohort[] {
+  const map = new Map<string, SessionSummary[]>();
+  for (const s of sessions) {
+    const key = s.site === "Not provided" || !s.site.trim() ? "No site code" : s.site;
+    const list = map.get(key) ?? [];
+    list.push(s);
+    map.set(key, list);
+  }
+  const total = sessions.length || 1;
+  return [...map.entries()]
+    .map(([label, list]) => {
+      const completions = list.filter((s) => s.outcome === "completed").length;
+      return {
+        label,
+        starts: list.length,
+        completions,
+        completion_rate: list.length ? completions / list.length : 0,
+        median_seconds: median(list.filter((s) => s.outcome === "completed").map(sessionWallSeconds)),
+        with_checkpoints: list.filter((s) => s.checkpoint_count > 0).length,
+        pct: list.length / total,
+      };
+    })
+    .sort((a, b) => b.starts - a.starts);
+}
+
+export function versionMix(sessions: SessionSummary[]): CountRow[] {
+  return tally(sessions, (s) => s.app_version || "Unspecified", "Unspecified");
+}
+
+export type KpiDelta = {
+  starts: number;
+  completions: number;
+  rate: number;
+  priorStarts: number;
+  priorCompletions: number;
+  priorRate: number;
+  startsDelta: number;
+  rateDelta: number;
+};
+
+export function compareKpis(current: SessionSummary[], prior: SessionSummary[]): KpiDelta {
+  const a = kpisFromSessions(current);
+  const b = kpisFromSessions(prior);
+  const rate = a.starts ? a.completions / a.starts : 0;
+  const priorRate = b.starts ? b.completions / b.starts : 0;
+  return {
+    starts: a.starts,
+    completions: a.completions,
+    rate,
+    priorStarts: b.starts,
+    priorCompletions: b.completions,
+    priorRate,
+    startsDelta: a.starts - b.starts,
+    rateDelta: rate - priorRate,
+  };
+}
+
+export function studyBrief(opts: {
+  rangeLabel: string;
+  sessions: SessionSummary[];
+  rawCount: number;
+  minSessionSeconds: number;
+  truncated: boolean;
+  fetched: number;
+  total: number | null;
+}): string {
+  const { sessions, rawCount, minSessionSeconds, rangeLabel, truncated, fetched, total } = opts;
+  if (!sessions.length) {
+    if (rawCount > 0 && minSessionSeconds > 0) {
+      return `In ${rangeLabel}, all ${rawCount} session${rawCount === 1 ? "" : "s"} were shorter than ${Math.round(minSessionSeconds / 60)} minutes. Lower the minimum length to include quick previews.`;
+    }
+    return `No anonymous sessions match the current study filters for ${rangeLabel}.`;
+  }
+  const kpis = kpisFromSessions(sessions);
+  const rate = kpis.starts ? kpis.completions / kpis.starts : 0;
+  const topPlace = tally(sessions, (s) => s.location).find((r) => r.label !== "Not resolved");
+  const unresolved = sessions.filter((s) => s.location === "Not resolved").length;
+  const sites = siteCohorts(sessions).filter((s) => s.label !== "No site code");
+  const health = trackingHealth(sessions);
+  const sparse = health.filter((h) => h.status === "sparse").length;
+  const parts = [
+    `In ${rangeLabel}, ${kpis.starts} session${kpis.starts === 1 ? "" : "s"}`,
+    minSessionSeconds > 0
+      ? ` lasting at least ${Math.round(minSessionSeconds / 60)} minutes (${rawCount - kpis.starts} shorter run${rawCount - kpis.starts === 1 ? "" : "s"} hidden)`
+      : "",
+    `. Completion rate ${Math.round(rate * 1000) / 10}% (${kpis.completions} completed)`,
+    kpis.median_completion_seconds != null
+      ? `, median completed duration ${formatDuration(kpis.median_completion_seconds)}`
+      : "",
+    `.`,
+  ];
+  if (topPlace) parts.push(` Most activity: ${topPlace.label} (${topPlace.n}).`);
+  if (unresolved) parts.push(` ${unresolved} session${unresolved === 1 ? "" : "s"} without locatable city/region.`);
+  if (sites.length) parts.push(` ${sites.length} site code${sites.length === 1 ? "" : "s"} in this extract.`);
+  if (sparse) parts.push(` ${sparse} case${sparse === 1 ? "" : "s"} have sparse checkpoint or locality coverage.`);
+  if (truncated) {
+    parts.push(
+      ` Extract is truncated (${fetched.toLocaleString()} of ${total?.toLocaleString() ?? "many"} events). Narrow the study period.`,
+    );
+  }
+  return parts.join("");
+}
+
+export function studyPacketText(opts: {
+  exportedAt: string;
+  exporter: string;
+  rangeLabel: string;
+  filters: string[];
+  brief: string;
+  kpis: ReturnType<typeof kpisFromSessions>;
+  truncated: boolean;
+  fetched: number;
+  total: number | null;
+}): string {
+  return [
+    "SimBox study extract",
+    `Exported: ${opts.exportedAt}`,
+    `By: ${opts.exporter}`,
+    `Period: ${opts.rangeLabel}`,
+    `Filters: ${opts.filters.length ? opts.filters.join("; ") : "none beyond period"}`,
+    "",
+    opts.brief,
+    "",
+    "Session-level counts (not raw event rows)",
+    `Starts: ${opts.kpis.starts}`,
+    `Completions: ${opts.kpis.completions}`,
+    `Exits: ${opts.kpis.exits}`,
+    `Active cases: ${opts.kpis.active_cases}`,
+    `Median completed duration (seconds): ${opts.kpis.median_completion_seconds ?? ""}`,
+    `Mean completed duration (seconds): ${opts.kpis.avg_completion_seconds ?? ""}`,
+    "",
+    "Data notes",
+    "- One row per anonymous browser-tab session.",
+    "- Duration uses reported elapsed_seconds when present, otherwise wall-clock from first to last action. Elapsed is capped at 12 hours at ingest.",
+    "- Location is approximate city-level IP geolocation. IP is not stored. This is not a named user, hospital, or street address.",
+    `- Events loaded: ${opts.fetched}${opts.total != null ? ` of ${opts.total}` : ""}${opts.truncated ? " (TRUNCATED)" : ""}.`,
+    "",
+  ].join("\n");
 }

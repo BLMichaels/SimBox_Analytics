@@ -1,17 +1,22 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { CountTable } from "../components/CountTable";
 import { FilterBar } from "../components/FilterBar";
+import { TruncationNotice } from "../components/TruncationNotice";
 import { formatPercent, formatRange } from "../lib/dates";
 import { applyClientFilters, fetchCaseEvents } from "../lib/fetchEvents";
 import { useStudyFilters } from "../lib/FilterProvider";
 import {
   bucketLocations,
   bucketsForScope,
+  bucketValue,
+  bucketsMetricTotal,
   caseColors,
   placeSessions,
   sessionsForMetric,
+  SHARE_LEGEND,
   VOLUME_LEGEND,
   type LocationBucket,
+  type MapDisplay,
   type MapGrain,
   type MapGroup,
   type MapLayer,
@@ -19,7 +24,7 @@ import {
   type MapScope,
   type UsaLevel,
 } from "../lib/mapData";
-import { summarizeSessions } from "../lib/reporting";
+import { filterSessionsByMinDuration, summarizeSessions } from "../lib/reporting";
 import { useLiveReload } from "../lib/useLiveReload";
 
 const UsageMap = lazy(async () => {
@@ -33,7 +38,11 @@ export function MapPage() {
   const [placing, setPlacing] = useState(false);
   const [buckets, setBuckets] = useState<LocationBucket[]>([]);
   const [unplaced, setUnplaced] = useState(0);
+  const [truncated, setTruncated] = useState(false);
+  const [fetchedCount, setFetchedCount] = useState(0);
+  const [eventTotal, setEventTotal] = useState<number | null>(null);
   const [metric, setMetric] = useState<MapMetric>("started");
+  const [display, setDisplay] = useState<MapDisplay>("count");
   const [layer, setLayer] = useState<MapLayer>("bubbles");
   const [group, setGroup] = useState<MapGroup>("overall");
   const [grain, setGrain] = useState<MapGrain>("country");
@@ -54,11 +63,17 @@ export function MapPage() {
       setBuckets([]);
       return;
     }
+    setTruncated(fetched.truncated);
+    setFetchedCount(fetched.fetched);
+    setEventTotal(fetched.total);
     const rows = applyClientFilters(fetched.rows, {
       includeNonProduction: filters.includeNonProduction,
       search: filters.search,
     });
-    const sessions = sessionsForMetric(summarizeSessions(rows), metric);
+    const sessions = sessionsForMetric(
+      filterSessionsByMinDuration(summarizeSessions(rows), filters.minSessionSeconds),
+      metric,
+    );
     setPlacing(true);
     try {
       const placed = await placeSessions(sessions);
@@ -76,6 +91,7 @@ export function MapPage() {
   useLiveReload(load);
 
   const visible = useMemo(() => bucketsForScope(buckets, scope), [buckets, scope]);
+  const metricTotal = useMemo(() => bucketsMetricTotal(visible, metric), [visible, metric]);
   const starts = visible.reduce((n, b) => n + b.starts, 0);
   const completions = visible.reduce((n, b) => n + b.completions, 0);
   const grainLabel = grain === "country" ? "countries" : grain === "state" ? "states" : "counties";
@@ -101,8 +117,9 @@ export function MapPage() {
       </header>
 
       <FilterBar cases={cases} filters={filters} onChange={setFilters} compact showSearch />
+      <TruncationNotice truncated={truncated} fetched={fetchedCount} total={eventTotal} />
 
-      <div className="mb-4 grid gap-3 border border-line bg-card p-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="mb-4 grid gap-3 border border-line bg-card p-4 md:grid-cols-2 xl:grid-cols-5">
         <fieldset>
           <legend className="text-[11px] font-medium tracking-[0.12em] text-ink-soft uppercase">Scope</legend>
           <div className="mt-2 flex flex-wrap gap-2">
@@ -228,6 +245,17 @@ export function MapPage() {
             )}
           </div>
         </fieldset>
+        <fieldset>
+          <legend className="text-[11px] font-medium tracking-[0.12em] text-ink-soft uppercase">Map data</legend>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Toggle pressed={display === "count"} onClick={() => setDisplay("count")}>
+              Session count
+            </Toggle>
+            <Toggle pressed={display === "share"} onClick={() => setDisplay("share")}>
+              % of total
+            </Toggle>
+          </div>
+        </fieldset>
       </div>
 
       {usa && usaLevel === "location" ? (
@@ -258,7 +286,13 @@ export function MapPage() {
 
       <p className="mb-3 text-[12px] text-ink-soft">
         {starts} placed {usa ? "U.S. " : ""}session{starts === 1 ? "" : "s"}
+        {filters.minSessionSeconds > 0
+          ? ` · ≥${Math.round(filters.minSessionSeconds / 60)} min only`
+          : ""}
         {metric === "completed" ? "" : ` · ${completions} completed (${formatPercent(starts ? completions / starts : 0)})`}
+        {display === "share"
+          ? ` · coloring by share of ${metricTotal} ${metric === "completed" ? "completions" : "starts"} in view`
+          : ""}
         {unplaced ? ` · ${unplaced} without a locatable city or region` : ""}
         {placing ? " · locating cities…" : ""}
         {usa
@@ -277,17 +311,17 @@ export function MapPage() {
           ))}
         </ul>
       ) : (
-        <div className="map-legend" aria-label="Session count colors">
-          <span>Fewer</span>
+        <div className="map-legend" aria-label={display === "share" ? "Share of sessions colors" : "Session count colors"}>
+          <span>{display === "share" ? "Lower share" : "Fewer"}</span>
           <ul>
-            {VOLUME_LEGEND.map((item) => (
+            {(display === "share" ? SHARE_LEGEND : VOLUME_LEGEND).map((item) => (
               <li key={item.label}>
                 <span style={{ background: item.color }} />
                 {item.label}
               </li>
             ))}
           </ul>
-          <span>More sessions</span>
+          <span>{display === "share" ? "Higher share" : "More sessions"}</span>
         </div>
       )}
 
@@ -309,6 +343,7 @@ export function MapPage() {
             scope={scope}
             usaLevel={usaLevel}
             metric={metric}
+            display={display}
             onGrainChange={setGrain}
           />
         </Suspense>
@@ -318,24 +353,30 @@ export function MapPage() {
         <CountTable
           title={usa ? "United States locations" : "Locations"}
           caption={
-            usaLevel === "location" || !usa
-              ? "City-level buckets. Color and size follow session count. Click a bubble for case mix."
-              : "Counts rolled up to the selected U.S. geography."
+            display === "share"
+              ? `Share of ${metric === "completed" ? "completions" : "starts"} among visible locations (${metricTotal} total).`
+              : usaLevel === "location" || !usa
+                ? "City-level buckets. Color and size follow session count. Click a bubble for case mix."
+                : "Counts rolled up to the selected U.S. geography."
           }
-          rows={visible.slice(0, 12).map((b) => ({
-            label: b.label,
-            n: metric === "completed" ? b.completions : b.starts,
-            pct: (metric === "completed" ? completions : starts)
-              ? (metric === "completed" ? b.completions : b.starts) / (metric === "completed" ? completions : starts)
-              : 0,
-          }))}
+          rows={visible.slice(0, 12).map((b) => {
+            const count = bucketValue(b, metric);
+            return {
+              label: b.label,
+              n: count,
+              pct: metricTotal ? count / metricTotal : 0,
+            };
+          })}
+          nLabel={display === "share" ? "Sessions" : undefined}
+          percentLabel={display === "share" ? "Share of total" : undefined}
           empty={usa ? "No United States sessions in this range." : "No locations to list."}
         />
         <section className="border border-line bg-card p-4 text-sm leading-6 text-ink-soft">
           <h2 className="font-serif text-lg text-ink">How to read this</h2>
           <ul className="mt-2 list-disc space-y-1 pl-5">
             <li>United States locks the map to the U.S. and switches with buttons: states, counties, or city-level locations.</li>
-            <li>Colors move from teal to gold to copper to red as more sessions share a place. Heatmaps use the same ramp.</li>
+            <li>Map data toggles between raw session count and each place&apos;s share of the total in the current view.</li>
+            <li>Colors move from teal to gold to copper to red as values increase. Heatmaps use the same ramp.</li>
             <li>Started counts every anonymous session. Started and completed keeps only sessions that reached the last step.</li>
             <li>Locations are IP geolocation (city-level), not a named user, hospital, or street address. The IP itself is not stored.</li>
           </ul>

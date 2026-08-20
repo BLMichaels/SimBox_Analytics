@@ -6,54 +6,36 @@ import { DashboardCharts } from "../components/DashboardCharts";
 import { DataTable, type Column } from "../components/DataTable";
 import { FilterBar } from "../components/FilterBar";
 import { SessionLink } from "../components/SessionLink";
+import { StudyBrief } from "../components/StudyBrief";
 import { StudyLedger } from "../components/StudyLedger";
+import { TruncationNotice } from "../components/TruncationNotice";
 import { downloadCsv, rangeStamp } from "../lib/csv";
 import { formatDuration, formatLocal, formatPercent, formatRange } from "../lib/dates";
-import { applyClientFilters, fetchCaseEvents } from "../lib/fetchEvents";
 import { useStudyFilters } from "../lib/FilterProvider";
 import {
   dash,
   durationBuckets,
   funnelFromSessions,
   hourMix,
-  outcomeMix,
   sessionCsvRow,
-  summarizeSessions,
+  siteCohorts,
+  studyBrief,
   tally,
+  timeOnStep,
+  trackingHealth,
   weekdayMix,
   type SessionSummary,
 } from "../lib/reporting";
-import { supabase } from "../lib/supabase";
+import { emptyExtract, loadStudyExtract, type StudyExtract } from "../lib/studyExtract";
 import { useLiveReload } from "../lib/useLiveReload";
-import type { CaseRecord, DashboardMetrics } from "../lib/types";
-
-function emptyMetrics(): DashboardMetrics {
-  return {
-    kpis: {
-      starts: 0,
-      completions: 0,
-      exits: 0,
-      unique_sessions: 0,
-      active_cases: 0,
-      avg_completion_seconds: null,
-      median_completion_seconds: null,
-    },
-    daily: [],
-    by_case: [],
-    by_delivery: [],
-    by_device: [],
-    by_step: [],
-  };
-}
+import type { CaseRecord } from "../lib/types";
 
 export function CasePage() {
   const { caseKey: rawKey } = useParams();
   const caseKey = rawKey ? decodeURIComponent(rawKey) : "";
   const navigate = useNavigate();
   const { filters, setFilters, bounds, cases } = useStudyFilters();
-  const [error, setError] = useState<string | null>(null);
-  const [metrics, setMetrics] = useState<DashboardMetrics>(emptyMetrics());
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [extract, setExtract] = useState<StudyExtract>(emptyExtract);
   const [record, setRecord] = useState<CaseRecord | null>(null);
 
   useEffect(() => {
@@ -64,43 +46,10 @@ export function CasePage() {
   const load = useCallback(async () => {
     const hit = cases.find((c) => c.case_key === caseKey);
     if (!hit) {
-      setSessions([]);
-      setMetrics(emptyMetrics());
+      setExtract(emptyExtract());
       return;
     }
-    setError(null);
-    const { data, error: err } = await supabase.rpc("admin_filtered_metrics", {
-      p_from: bounds.from.toISOString(),
-      p_to: new Date(bounds.to.getTime() + 1).toISOString(),
-      p_case_ids: [hit.id],
-      p_event_types: null,
-      p_delivery_contexts: filters.deliveryContexts.length ? filters.deliveryContexts : null,
-      p_device_types: filters.deviceTypes.length ? filters.deviceTypes : null,
-      p_include_nonproduction: filters.includeNonProduction,
-    });
-    if (err || !data) setMetrics(emptyMetrics());
-    else setMetrics(data as DashboardMetrics);
-
-    const fetched = await fetchCaseEvents({
-      from: bounds.from,
-      to: bounds.to,
-      caseIds: [hit.id],
-      deliveryContexts: filters.deliveryContexts,
-      deviceTypes: filters.deviceTypes,
-    });
-    if (fetched.error) {
-      setError(fetched.error);
-      setSessions([]);
-      return;
-    }
-    setSessions(
-      summarizeSessions(
-        applyClientFilters(fetched.rows, {
-          includeNonProduction: filters.includeNonProduction,
-          search: filters.search,
-        }),
-      ),
-    );
+    setExtract(await loadStudyExtract({ from: bounds.from, to: bounds.to, filters, caseIds: [hit.id] }));
   }, [bounds.from, bounds.to, caseKey, cases, filters]);
 
   useEffect(() => {
@@ -109,13 +58,30 @@ export function CasePage() {
 
   useLiveReload(load);
 
-  const kpis = metrics.kpis;
+  const sessions = extract.sessions;
+  const kpis = extract.metrics.kpis;
+  const error = extract.error;
   const completionRate = !kpis.starts ? 0 : Number(kpis.completions) / Number(kpis.starts);
   const funnel = useMemo(() => funnelFromSessions(sessions), [sessions]);
   const durations = useMemo(() => durationBuckets(sessions), [sessions]);
   const weekdays = useMemo(() => weekdayMix(sessions), [sessions]);
   const hours = useMemo(() => hourMix(sessions), [sessions]);
   const lastStep = useMemo(() => tally(sessions, (s) => s.last_step, "Unknown"), [sessions]);
+  const dwell = useMemo(() => timeOnStep(sessions), [sessions]);
+  const health = trackingHealth(sessions, caseKey)[0];
+  const brief = useMemo(
+    () =>
+      studyBrief({
+        rangeLabel: formatRange(bounds.from, bounds.to),
+        sessions,
+        rawCount: extract.rawSessions.length,
+        minSessionSeconds: filters.minSessionSeconds,
+        truncated: extract.truncated,
+        fetched: extract.fetched,
+        total: extract.total,
+      }),
+    [bounds.from, bounds.to, extract, filters.minSessionSeconds, sessions],
+  );
 
   const columns: Column<SessionSummary>[] = [
     {
@@ -236,6 +202,14 @@ export function CasePage() {
           {error}
         </p>
       ) : null}
+      <TruncationNotice truncated={extract.truncated} fetched={extract.fetched} total={extract.total} />
+      <StudyBrief text={brief} />
+      {health ? (
+        <p className="mb-4 text-sm text-ink-soft">
+          Tracking health: {health.status}. {formatPercent(health.checkpointRate)} of sessions have checkpoints;{" "}
+          {formatPercent(health.locatableRate)} are locatable.
+        </p>
+      ) : null}
 
       <StudyLedger
         items={[
@@ -267,7 +241,7 @@ export function CasePage() {
       />
 
       <div className="mt-4">
-        <DashboardCharts metrics={metrics} funnel={funnel} durations={durations} weekdays={weekdays} hours={hours} />
+        <DashboardCharts metrics={extract.metrics} funnel={funnel} durations={durations} weekdays={weekdays} hours={hours} />
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
@@ -279,7 +253,31 @@ export function CasePage() {
           rowHint="Filter sessions by this last step"
           empty="No step data in this range."
         />
-        <CountTable title="Outcomes" rows={outcomeMix(sessions)} empty="No sessions in this range." />
+        <CountTable
+          title="Outcomes"
+          rows={tally(sessions, (s) => (s.outcome === "completed" ? "Completed" : s.outcome === "exited" ? "Exited before complete" : "In progress"))}
+          empty="No sessions in this range."
+        />
+        <CountTable
+          title="Time on step"
+          caption="Average dwell until the next recorded action."
+          rows={dwell.map((d) => ({
+            label: `${d.label} · avg ${formatDuration(d.avgSeconds)} · ${d.dropoff} drop-off`,
+            n: d.reached,
+            pct: d.pct,
+          }))}
+          nLabel="Reached"
+          empty="No checkpoints. Add simbox-case-hooks.js or Storyline checkpoint calls for this case."
+        />
+        <CountTable
+          title="Site cohorts"
+          rows={siteCohorts(sessions).map((s) => ({
+            label: `${s.label} · ${formatPercent(s.completion_rate)} complete`,
+            n: s.starts,
+            pct: s.pct,
+          }))}
+          empty="No site codes for this case in range."
+        />
         <CountTable
           title="Locality"
           caption="Click a place to open it on the map."

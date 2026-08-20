@@ -3,7 +3,16 @@ import { rangeForPreset } from "./dates";
 import { supabase } from "./supabase";
 import type { CaseRecord, Filters } from "./types";
 
-const STORAGE = "simbox.studyFilters.v1";
+const STORAGE = "simbox.studyFilters.v2";
+
+export const MIN_SESSION_PRESETS: Array<{ label: string; seconds: number }> = [
+  { label: "Any length", seconds: 0 },
+  { label: "2 min", seconds: 120 },
+  { label: "5 min", seconds: 300 },
+  { label: "10 min", seconds: 600 },
+  { label: "15 min", seconds: 900 },
+  { label: "20 min", seconds: 1200 },
+];
 
 export function defaultFilters(): Filters {
   const { from, to } = rangeForPreset("last30");
@@ -17,6 +26,7 @@ export function defaultFilters(): Filters {
     deviceTypes: [],
     search: "",
     includeNonProduction: true,
+    minSessionSeconds: 0,
   };
 }
 
@@ -25,7 +35,13 @@ function readStored(): Filters {
     const raw = sessionStorage.getItem(STORAGE);
     if (!raw) return defaultFilters();
     const parsed = JSON.parse(raw) as Filters & { from: string; to: string };
-    const base = { ...defaultFilters(), ...parsed, from: new Date(parsed.from), to: new Date(parsed.to) };
+    const base = {
+      ...defaultFilters(),
+      ...parsed,
+      from: new Date(parsed.from),
+      to: new Date(parsed.to),
+      minSessionSeconds: typeof parsed.minSessionSeconds === "number" ? parsed.minSessionSeconds : 0,
+    };
     if (base.preset !== "custom") {
       const { from, to } = rangeForPreset(base.preset);
       return { ...base, from, to };

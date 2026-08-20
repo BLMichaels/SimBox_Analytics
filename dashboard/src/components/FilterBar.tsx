@@ -1,5 +1,8 @@
+import { useState } from "react";
 import type { CaseRecord, DatePreset, DeliveryContext, DeviceType, EventType, Filters } from "../lib/types";
 import { isoDateInput } from "../lib/dates";
+import { defaultFilters, MIN_SESSION_PRESETS } from "../lib/FilterProvider";
+import { deletePreset, describeFilters, loadPresets, presetToFilters, savePreset, type SavedPreset } from "../lib/filterPresets";
 
 const presets: Array<{ id: DatePreset; label: string }> = [
   { id: "today", label: "Today" },
@@ -26,8 +29,38 @@ function toggle<T>(list: T[], value: T): T[] {
 }
 
 export function FilterBar({ cases, filters, onChange, showEventFilter, showSearch, compact, hideCases }: Props) {
+  const [presetName, setPresetName] = useState("");
+  const [presetsSaved, setPresetsSaved] = useState<SavedPreset[]>(() => loadPresets());
+  const chips = describeFilters(filters, cases);
+
+  function clearExtras() {
+    const next = defaultFilters();
+    onChange({
+      ...filters,
+      caseIds: [],
+      eventTypes: [],
+      deliveryContexts: [],
+      deviceTypes: [],
+      search: "",
+      includeNonProduction: next.includeNonProduction,
+      minSessionSeconds: 0,
+    });
+  }
+
   return (
     <section aria-label="Report filters" className="mb-6 border border-line bg-card p-4">
+      {chips.length ? (
+        <div className="mb-4 flex flex-wrap items-center gap-2" aria-label="Active filters">
+          {chips.map((chip) => (
+            <span key={chip} className="border border-teal/40 bg-paper px-2 py-1 text-xs text-teal-deep">
+              {chip}
+            </span>
+          ))}
+          <button type="button" className="text-xs text-ink-soft underline-offset-2 hover:underline" onClick={clearExtras}>
+            Clear extra filters
+          </button>
+        </div>
+      ) : null}
       <div>
         <p className="text-[11px] font-medium tracking-[0.12em] text-ink-soft uppercase">Study period</p>
         <div className="mt-2 flex flex-wrap gap-2">
@@ -74,6 +107,61 @@ export function FilterBar({ cases, filters, onChange, showEventFilter, showSearc
             </label>
           </div>
         ) : null}
+      </div>
+
+      <div className="mt-4">
+        <p className="text-[11px] font-medium tracking-[0.12em] text-ink-soft uppercase">Minimum session length</p>
+        <p className="mt-1 max-w-2xl text-xs leading-5 text-ink-soft">
+          Hide quick click-throughs. Uses reported elapsed time, or wall-clock from start to last action when elapsed
+          is missing.
+        </p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {MIN_SESSION_PRESETS.map((p) => (
+            <button
+              key={p.seconds}
+              type="button"
+              aria-pressed={filters.minSessionSeconds === p.seconds}
+              onClick={() => onChange({ ...filters, minSessionSeconds: p.seconds })}
+              className={[
+                "rounded-sm border px-3 py-1.5 text-sm",
+                filters.minSessionSeconds === p.seconds
+                  ? "border-teal bg-teal text-card"
+                  : "border-line bg-paper text-ink hover:border-teal",
+              ].join(" ")}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <label className="mt-3 flex flex-wrap items-center gap-2 text-sm text-ink-soft">
+          Custom minimum (minutes)
+          <input
+            type="number"
+            min={0}
+            step={1}
+            className="w-20 border border-line bg-paper px-2 py-1 text-ink"
+            value={
+              MIN_SESSION_PRESETS.some((p) => p.seconds === filters.minSessionSeconds)
+                ? ""
+                : filters.minSessionSeconds
+                  ? String(Math.round(filters.minSessionSeconds / 60))
+                  : ""
+            }
+            placeholder="—"
+            onChange={(e) => {
+              const raw = e.target.value.trim();
+              if (!raw) {
+                onChange({ ...filters, minSessionSeconds: 0 });
+                return;
+              }
+              const mins = Number(raw);
+              onChange({
+                ...filters,
+                minSessionSeconds: Number.isFinite(mins) && mins > 0 ? Math.round(mins * 60) : 0,
+              });
+            }}
+          />
+        </label>
       </div>
 
       <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-end">
@@ -188,6 +276,54 @@ export function FilterBar({ cases, filters, onChange, showEventFilter, showSearc
           </div>
         </div>
       </details>
+
+      <div className="mt-4 border-t border-line pt-3">
+        <p className="text-[11px] font-medium tracking-[0.12em] text-ink-soft uppercase">Saved views</p>
+        <div className="mt-2 flex flex-wrap items-end gap-2">
+          <label className="text-sm text-ink-soft">
+            Name
+            <input
+              value={presetName}
+              onChange={(e) => setPresetName(e.target.value)}
+              placeholder="Facilitated runs ≥10 min"
+              className="ml-2 border border-line bg-paper px-2 py-1 text-ink"
+            />
+          </label>
+          <button
+            type="button"
+            className="border border-line bg-paper px-3 py-1.5 text-sm"
+            onClick={() => {
+              setPresetsSaved(savePreset(presetName, filters));
+              setPresetName("");
+            }}
+          >
+            Save current filters
+          </button>
+        </div>
+        {presetsSaved.length ? (
+          <ul className="mt-3 flex flex-wrap gap-2">
+            {presetsSaved.map((p) => (
+              <li key={p.id} className="flex items-center gap-1 border border-line bg-paper">
+                <button
+                  type="button"
+                  className="px-2 py-1 text-sm hover:text-teal-deep"
+                  onClick={() => onChange(presetToFilters(p))}
+                >
+                  {p.name}
+                </button>
+                <button
+                  type="button"
+                  className="px-2 py-1 text-xs text-ink-soft hover:text-danger"
+                  aria-label={`Delete saved view ${p.name}`}
+                  onClick={() => setPresetsSaved(deletePreset(p.id))}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
     </section>
   );
 }

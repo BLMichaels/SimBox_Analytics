@@ -1,40 +1,73 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { CaseLink } from "../components/CaseLink";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DataTable, type Column } from "../components/DataTable";
-import { formatPercent } from "../lib/dates";
+import { FilterBar } from "../components/FilterBar";
+import { TruncationNotice } from "../components/TruncationNotice";
+import { logAudit } from "../lib/auditLog";
+import { useAuth } from "../lib/auth";
+import { formatPercent, formatRange } from "../lib/dates";
+import { useStudyFilters } from "../lib/FilterProvider";
+import { trackingHealth } from "../lib/reporting";
+import { emptyExtract, loadStudyExtract, type StudyExtract } from "../lib/studyExtract";
 import { supabase, trackingEndpoint } from "../lib/supabase";
-import type { CaseRecord, CaseSummary } from "../lib/types";
+import { useLiveReload } from "../lib/useLiveReload";
+import type { CaseRecord } from "../lib/types";
+
+type CaseRow = CaseRecord & {
+  starts: number;
+  completions: number;
+  completion_rate: number;
+  health: "ok" | "sparse" | "silent";
+  checkpointRate: number;
+};
 
 export function CasesPage() {
   const navigate = useNavigate();
-  const [rows, setRows] = useState<CaseSummary[]>([]);
-  const [selected, setSelected] = useState<CaseSummary | null>(null);
+  const { user } = useAuth();
+  const { filters, setFilters, bounds, cases } = useStudyFilters();
+  const [extract, setExtract] = useState<StudyExtract>(emptyExtract);
+  const [selected, setSelected] = useState<CaseRow | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [draftKey, setDraftKey] = useState("");
   const [draftName, setDraftName] = useState("");
   const [draftVersion, setDraftVersion] = useState("1.0.0");
-  const [pendingDeactivate, setPendingDeactivate] = useState<CaseSummary | null>(null);
+  const [pendingDeactivate, setPendingDeactivate] = useState<CaseRow | null>(null);
 
-  async function reload() {
-    const { data, error: err } = await supabase
-      .from("case_summary_metrics")
-      .select("*")
-      .order("display_name");
-    if (err) {
-      setError("Unable to load cases.");
-      return;
-    }
-    setRows((data ?? []) as CaseSummary[]);
-  }
+  const load = useCallback(async () => {
+    setExtract(await loadStudyExtract({ from: bounds.from, to: bounds.to, filters }));
+  }, [bounds.from, bounds.to, filters]);
 
   useEffect(() => {
-    void reload();
-  }, []);
+    void load();
+  }, [load]);
+  useLiveReload(load);
 
-  const columns: Column<CaseSummary>[] = [
+  const health = useMemo(() => trackingHealth(extract.sessions), [extract.sessions]);
+  const byCase = extract.metrics.by_case;
+
+  const rows: CaseRow[] = useMemo(() => {
+    return cases.map((c) => {
+      const stats = byCase.find((b) => b.case_key === c.case_key);
+      const h = health.find((x) => x.case_key === c.case_key);
+      return {
+        ...c,
+        starts: stats?.starts ?? 0,
+        completions: stats?.completions ?? 0,
+        completion_rate: stats?.completion_rate ?? 0,
+        health: h?.status ?? "silent",
+        checkpointRate: h?.checkpointRate ?? 0,
+      };
+    });
+  }, [byCase, cases, health]);
+
+  useEffect(() => {
+    setSelected((prev) => (prev ? (rows.find((r) => r.id === prev.id) ?? prev) : prev));
+  }, [rows]);
+
+  const columns: Column<CaseRow>[] = [
     { key: "key", header: "Key", sortValue: (r) => r.case_key, render: (r) => <span className="font-mono text-xs">{r.case_key}</span> },
     {
       key: "name",
@@ -44,9 +77,18 @@ export function CasesPage() {
     },
     { key: "status", header: "Status", sortValue: (r) => (r.active ? "active" : "inactive"), render: (r) => (r.active ? "Active" : "Inactive") },
     { key: "version", header: "Version", sortValue: (r) => r.app_version ?? "", render: (r) => r.app_version ?? "—" },
-    { key: "starts", header: "Starts", sortValue: (r) => Number(r.total_starts), render: (r) => String(r.total_starts ?? 0) },
-    { key: "completions", header: "Completions", sortValue: (r) => Number(r.total_completions), render: (r) => String(r.total_completions ?? 0) },
-    { key: "rate", header: "Completion rate", sortValue: (r) => Number(r.completion_rate), render: (r) => formatPercent(Number(r.completion_rate)) },
+    { key: "starts", header: "Starts in period", sortValue: (r) => r.starts, render: (r) => String(r.starts) },
+    { key: "rate", header: "Completion rate", sortValue: (r) => r.completion_rate, render: (r) => formatPercent(r.completion_rate) },
+    {
+      key: "health",
+      header: "Tracking",
+      sortValue: (r) => r.health,
+      render: (r) => (
+        <span className={r.health === "ok" ? "text-ok" : r.health === "sparse" ? "text-copper" : "text-ink-soft"}>
+          {r.health === "ok" ? "Healthy" : r.health === "sparse" ? "Sparse checkpoints/geo" : "No sessions"}
+        </span>
+      ),
+    },
   ];
 
   const snippet = useMemo(() => {
@@ -71,10 +113,10 @@ export function CasesPage() {
       setError("Unable to create the case. Keys must be unique and use letters, numbers, underscore, or hyphen.");
       return;
     }
+    logAudit(user?.email ?? "", "create_case", draftKey.trim());
     setCreating(false);
     setDraftKey("");
     setDraftName("");
-    await reload();
   }
 
   async function saveCase(caseId: string, patch: Partial<CaseRecord>) {
@@ -83,27 +125,31 @@ export function CasesPage() {
       setError("Unable to save case changes. Case keys cannot change after events exist.");
       return;
     }
-    await reload();
+    if (patch.active === false) logAudit(user?.email ?? "", "deactivate_case", caseId);
   }
 
   return (
     <div>
       <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="font-serif text-3xl text-ink">Cases</h1>
-          <p className="mt-1 text-sm text-ink-soft">
-            Open a case for its study dossier. Register a GitHub Pages case here before events will be accepted.
+          <p className="text-[11px] font-medium tracking-[0.18em] text-teal uppercase">Catalog</p>
+          <h1 className="font-serif mt-1 text-3xl text-ink">Cases</h1>
+          <p className="mt-1 max-w-3xl text-sm text-ink-soft">
+            Starts and tracking health for {formatRange(bounds.from, bounds.to)}. Open a name for the dossier, or
+            select a row to copy the GitHub snippet.
           </p>
         </div>
         <button type="button" className="bg-teal px-3 py-2 text-sm text-card" onClick={() => setCreating(true)}>
           New case
         </button>
       </header>
+      <FilterBar cases={cases} filters={filters} onChange={setFilters} compact hideCases />
       {error ? (
         <p role="alert" className="mb-4 text-sm text-danger">
           {error}
         </p>
       ) : null}
+      <TruncationNotice truncated={extract.truncated} fetched={extract.fetched} total={extract.total} />
       {creating ? (
         <form
           className="mb-6 grid gap-3 border border-line bg-card p-4 md:grid-cols-3"
@@ -138,36 +184,31 @@ export function CasesPage() {
       <DataTable
         columns={columns}
         rows={rows}
-        rowKey={(r) => r.case_id}
-        onRowClick={(r) => navigate(`/cases/${encodeURIComponent(r.case_key)}`)}
+        rowKey={(r) => r.id}
+        onRowClick={(r) => setSelected(r)}
         emptyTitle="No cases yet"
         emptyBody="Create a case that matches the GitHub repository name, then add tracking to that repository."
       />
-      <p className="mt-2 text-xs text-ink-soft">Select a row below to edit and copy the GitHub snippet.</p>
-      <ul className="mt-3 divide-y divide-line border border-line bg-card">
-        {rows.map((r) => (
-          <li key={r.case_id}>
-            <button
-              type="button"
-              onClick={() => setSelected(r)}
-              className={[
-                "flex w-full items-center justify-between px-3 py-2 text-left text-sm",
-                selected?.case_id === r.case_id ? "bg-paper-2" : "hover:bg-paper",
-              ].join(" ")}
-            >
-              <span>{r.display_name}</span>
-              <span className="font-mono text-xs text-ink-soft">{r.case_key}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
 
       {selected ? (
         <section className="mt-6 border border-line bg-card p-4">
-          <h2 className="font-serif text-xl">Configure {selected.display_name}</h2>
-          <p className="mt-1 text-sm text-ink-soft">
-            <CaseLink caseKey={selected.case_key}>Open the study dossier</CaseLink> for metrics, funnel, and sessions.
-          </p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="font-serif text-xl">Configure {selected.display_name}</h2>
+              <p className="mt-1 text-sm text-ink-soft">
+                <CaseLink caseKey={selected.case_key}>Open the study dossier</CaseLink>
+                {" · "}
+                {selected.starts} start{selected.starts === 1 ? "" : "s"} in this period · tracking {selected.health}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="border border-line px-3 py-1.5 text-sm"
+              onClick={() => navigate(`/cases/${encodeURIComponent(selected.case_key)}`)}
+            >
+              Open dossier
+            </button>
+          </div>
           <form
             className="mt-4 grid gap-3 md:grid-cols-2"
             onSubmit={(e) => {
@@ -180,7 +221,7 @@ export function CasesPage() {
                 setPendingDeactivate(selected);
                 return;
               }
-              void saveCase(selected.case_id, { display_name: name, app_version: version || null, active });
+              void saveCase(selected.id, { display_name: name, app_version: version || null, active });
             }}
           >
             <label className="text-sm md:col-span-2">
@@ -189,14 +230,14 @@ export function CasesPage() {
             </label>
             <label className="text-sm">
               Display name
-              <input name="display_name" defaultValue={selected.display_name} key={`${selected.case_id}-name`} className="mt-1 w-full border border-line bg-paper px-2 py-1.5" />
+              <input name="display_name" defaultValue={selected.display_name} key={`${selected.id}-name`} className="mt-1 w-full border border-line bg-paper px-2 py-1.5" />
             </label>
             <label className="text-sm">
               Version
-              <input name="app_version" defaultValue={selected.app_version ?? ""} key={`${selected.case_id}-ver`} className="mt-1 w-full border border-line bg-paper px-2 py-1.5" />
+              <input name="app_version" defaultValue={selected.app_version ?? ""} key={`${selected.id}-ver`} className="mt-1 w-full border border-line bg-paper px-2 py-1.5" />
             </label>
             <label className="flex items-center gap-2 text-sm">
-              <input name="active" type="checkbox" defaultChecked={selected.active} key={`${selected.case_id}-act`} />
+              <input name="active" type="checkbox" defaultChecked={selected.active} key={`${selected.id}-act`} />
               Active (inactive cases reject new events)
             </label>
             <div>
@@ -207,14 +248,16 @@ export function CasesPage() {
           </form>
           <h3 className="mt-6 text-sm font-medium">GitHub repository configuration</h3>
           <p className="mt-2 text-xs leading-5 text-ink-soft">
-            Optional site code: append <code className="font-mono">?simbox_site=HOSP01</code> to the case URL
-            (letters, numbers, underscore, hyphen). The player does not know hospital name or user identity.
+            Also include <code className="font-mono">simbox-case-hooks.js</code> so slide checkpoints fire automatically.
+            Optional site code: append <code className="font-mono">?simbox_site=HOSP01</code> to the case URL.
           </p>
           <pre className="mt-2 overflow-x-auto bg-ink p-3 text-xs text-card">
             <code>{snippet}</code>
           </pre>
         </section>
-      ) : null}
+      ) : (
+        <p className="mt-4 text-sm text-ink-soft">Select a case to edit its name, version, and tracking snippet.</p>
+      )}
 
       {pendingDeactivate ? (
         <ConfirmDialog
@@ -225,7 +268,7 @@ export function CasesPage() {
           onConfirm={() => {
             const target = pendingDeactivate;
             setPendingDeactivate(null);
-            void saveCase(target.case_id, { active: false });
+            void saveCase(target.id, { active: false });
           }}
         />
       ) : null}
