@@ -142,3 +142,42 @@ details[open] > summary::before {
   display: inline-block;
   border: 1px solid var(--color-line);
 }
+
+.count-meter-track {
+  display: block;
+  margin-top: 0.35rem;
+  height: 0.35rem;
+  max-width: 11rem;
+  background: var(--color-paper-2);
+}
+
+.count-meter {
+  display: block;
+  height: 100%;
+  min-width: 0.2rem;
+  background: var(--color-teal);
+}
+
+.outcome-pill {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid var(--color-line);
+}
+
+.outcome-completed {
+  color: var(--color-ok);
+  border-color: var(--color-ok);
+}
+
+.outcome-exited {
+  color: var(--color-copper);
+  border-color: var(--color-copper);
+}
+
+.outcome-in_progress {
+  color: var(--color-teal-deep);
+  border-color: var(--color-teal);
+}

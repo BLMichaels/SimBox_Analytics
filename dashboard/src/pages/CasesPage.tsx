@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { CaseLink } from "../components/CaseLink";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DataTable, type Column } from "../components/DataTable";
 import { formatPercent } from "../lib/dates";
@@ -6,6 +8,7 @@ import { supabase, trackingEndpoint } from "../lib/supabase";
 import type { CaseRecord, CaseSummary } from "../lib/types";
 
 export function CasesPage() {
+  const navigate = useNavigate();
   const [rows, setRows] = useState<CaseSummary[]>([]);
   const [selected, setSelected] = useState<CaseSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -33,7 +36,12 @@ export function CasesPage() {
 
   const columns: Column<CaseSummary>[] = [
     { key: "key", header: "Key", sortValue: (r) => r.case_key, render: (r) => <span className="font-mono text-xs">{r.case_key}</span> },
-    { key: "name", header: "Display name", sortValue: (r) => r.display_name, render: (r) => r.display_name },
+    {
+      key: "name",
+      header: "Display name",
+      sortValue: (r) => r.display_name,
+      render: (r) => <CaseLink caseKey={r.case_key}>{r.display_name}</CaseLink>,
+    },
     { key: "status", header: "Status", sortValue: (r) => (r.active ? "active" : "inactive"), render: (r) => (r.active ? "Active" : "Inactive") },
     { key: "version", header: "Version", sortValue: (r) => r.app_version ?? "", render: (r) => r.app_version ?? "—" },
     { key: "starts", header: "Starts", sortValue: (r) => Number(r.total_starts), render: (r) => String(r.total_starts ?? 0) },
@@ -83,7 +91,9 @@ export function CasesPage() {
       <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="font-serif text-3xl text-ink">Cases</h1>
-          <p className="mt-1 text-sm text-ink-soft">Register each GitHub Pages case before events will be accepted.</p>
+          <p className="mt-1 text-sm text-ink-soft">
+            Open a case for its study dossier. Register a GitHub Pages case here before events will be accepted.
+          </p>
         </div>
         <button type="button" className="bg-teal px-3 py-2 text-sm text-card" onClick={() => setCreating(true)}>
           New case
@@ -129,6 +139,7 @@ export function CasesPage() {
         columns={columns}
         rows={rows}
         rowKey={(r) => r.case_id}
+        onRowClick={(r) => navigate(`/cases/${encodeURIComponent(r.case_key)}`)}
         emptyTitle="No cases yet"
         emptyBody="Create a case that matches the GitHub repository name, then add tracking to that repository."
       />
@@ -153,7 +164,10 @@ export function CasesPage() {
 
       {selected ? (
         <section className="mt-6 border border-line bg-card p-4">
-          <h2 className="font-serif text-xl">Edit {selected.display_name}</h2>
+          <h2 className="font-serif text-xl">Configure {selected.display_name}</h2>
+          <p className="mt-1 text-sm text-ink-soft">
+            <CaseLink caseKey={selected.case_key}>Open the study dossier</CaseLink> for metrics, funnel, and sessions.
+          </p>
           <form
             className="mt-4 grid gap-3 md:grid-cols-2"
             onSubmit={(e) => {

@@ -1,39 +1,125 @@
 import type { ReactNode } from "react";
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import type { CountRow } from "../lib/reporting";
 import type { DashboardMetrics } from "../lib/types";
 
 const TEAL = "#1f6a66";
 const COPPER = "#9a4f2c";
+const GOLD = "#c4a35a";
 const PAPER = "#d4cdc0";
 
-type Props = { metrics: DashboardMetrics };
+type Props = {
+  metrics: DashboardMetrics;
+  funnel?: CountRow[];
+  durations?: CountRow[];
+  weekdays?: CountRow[];
+  hours?: CountRow[];
+};
 
-export function DashboardCharts({ metrics }: Props) {
+export function DashboardCharts({ metrics, funnel, durations, weekdays, hours }: Props) {
   const daily = metrics.daily.map((d) => ({
     day: new Date(d.day_utc).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
     starts: Number(d.starts),
     completions: Number(d.completions),
   }));
+  const funnelData = (funnel ?? []).map((r) => ({ label: r.label, sessions: r.n, rate: Math.round(r.pct * 1000) / 10 }));
+  const durationData = (durations ?? []).map((r) => ({ label: r.label, sessions: r.n }));
+  const weekdayData = (weekdays ?? []).map((r) => ({ label: r.label.slice(0, 3), sessions: r.n }));
+  const hourData = (hours ?? []).map((r) => ({ label: r.label.replace(/\s*\(.*/, ""), sessions: r.n }));
 
   return (
-    <ChartCard title="Daily starts and completions" caption="UTC calendar days. Completions may land on a later day than the start.">
-      <ResponsiveContainer width="100%" height={240}>
-        <LineChart data={daily} margin={{ left: 8, right: 12, top: 8, bottom: 8 }}>
-          <CartesianGrid stroke={PAPER} vertical={false} />
-          <XAxis dataKey="day" tick={{ fontSize: 11 }} />
-          <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={36} />
-          <Tooltip />
-          <Line type="monotone" dataKey="starts" name="Starts" stroke={TEAL} strokeWidth={2} dot={false} />
-          <Line type="monotone" dataKey="completions" name="Completions" stroke={COPPER} strokeWidth={2} dot={false} />
-        </LineChart>
-      </ResponsiveContainer>
-    </ChartCard>
+    <div className="grid gap-4 xl:grid-cols-2">
+      <ChartCard title="Daily starts and completions" caption="UTC calendar days. Completions may land on a later day than the start.">
+        <ResponsiveContainer width="100%" height={240}>
+          <LineChart data={daily} margin={{ left: 8, right: 12, top: 8, bottom: 8 }}>
+            <CartesianGrid stroke={PAPER} vertical={false} />
+            <XAxis dataKey="day" tick={{ fontSize: 11 }} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={36} />
+            <Tooltip />
+            <Line type="monotone" dataKey="starts" name="Starts" stroke={TEAL} strokeWidth={2} dot={false} />
+            <Line type="monotone" dataKey="completions" name="Completions" stroke={COPPER} strokeWidth={2} dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      </ChartCard>
+      {funnelData.length ? (
+        <ChartCard title="Progression funnel" caption="Sessions that reached each recorded step in this range.">
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={funnelData} margin={{ left: 8, right: 12, top: 8, bottom: 8 }}>
+              <CartesianGrid stroke={PAPER} vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={0} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={36} />
+              <Tooltip />
+              <Bar dataKey="sessions" name="Sessions" fill={TEAL} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+      ) : null}
+      {durationData.length ? (
+        <ChartCard title="Time to complete or exit" caption="Elapsed time on sessions that recorded a duration.">
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={durationData} margin={{ left: 8, right: 12, top: 8, bottom: 8 }}>
+              <CartesianGrid stroke={PAPER} vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={36} />
+              <Tooltip />
+              <Bar dataKey="sessions" name="Sessions" fill={COPPER} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+      ) : null}
+      {weekdayData.length ? (
+        <ChartCard title="Starts by weekday" caption="Local timezone of this browser.">
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={weekdayData} margin={{ left: 8, right: 12, top: 8, bottom: 8 }}>
+              <CartesianGrid stroke={PAPER} vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={36} />
+              <Tooltip />
+              <Bar dataKey="sessions" name="Starts" fill={GOLD} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+      ) : null}
+      {hourData.length ? (
+        <ChartCard title="Starts by time of day" caption="Local timezone of this browser." wide={!weekdayData.length}>
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={hourData} margin={{ left: 8, right: 12, top: 8, bottom: 8 }}>
+              <CartesianGrid stroke={PAPER} vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={36} />
+              <Tooltip />
+              <Bar dataKey="sessions" name="Starts" fill={TEAL} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+      ) : null}
+    </div>
   );
 }
 
-function ChartCard({ title, caption, children }: { title: string; caption?: string; children: ReactNode }) {
+function ChartCard({
+  title,
+  caption,
+  children,
+  wide,
+}: {
+  title: string;
+  caption?: string;
+  children: ReactNode;
+  wide?: boolean;
+}) {
   return (
-    <section className="border border-line bg-card p-4">
+    <section className={["border border-line bg-card p-4", wide ? "xl:col-span-2" : ""].join(" ")}>
       <h3 className="font-serif text-lg text-ink">{title}</h3>
       {caption ? <p className="mt-0.5 text-[11px] text-ink-soft">{caption}</p> : null}
       <div className="mt-2 h-[240px]">{children}</div>

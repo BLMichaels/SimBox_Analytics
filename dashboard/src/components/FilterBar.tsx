@@ -18,13 +18,14 @@ type Props = {
   showEventFilter?: boolean;
   showSearch?: boolean;
   compact?: boolean;
+  hideCases?: boolean;
 };
 
 function toggle<T>(list: T[], value: T): T[] {
   return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
 }
 
-export function FilterBar({ cases, filters, onChange, showEventFilter, showSearch, compact }: Props) {
+export function FilterBar({ cases, filters, onChange, showEventFilter, showSearch, compact, hideCases }: Props) {
   return (
     <section aria-label="Report filters" className="mb-6 border border-line bg-card p-4">
       <div>
@@ -103,6 +104,7 @@ export function FilterBar({ cases, filters, onChange, showEventFilter, showSearc
           Case, access, and device filters
         </summary>
         <div className="mt-4 grid gap-4">
+          {!hideCases ? (
           <fieldset>
             <legend className="text-[11px] font-medium tracking-[0.12em] text-ink-soft uppercase">Cases</legend>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -130,6 +132,7 @@ export function FilterBar({ cases, filters, onChange, showEventFilter, showSearc
               ))}
             </div>
           </fieldset>
+          ) : null}
 
           {showEventFilter ? (
             <fieldset>

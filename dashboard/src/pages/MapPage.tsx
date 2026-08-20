@@ -1,8 +1,9 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { CountTable } from "../components/CountTable";
 import { FilterBar } from "../components/FilterBar";
-import { formatPercent, formatRange, rangeForPreset } from "../lib/dates";
+import { formatPercent, formatRange } from "../lib/dates";
 import { applyClientFilters, fetchCaseEvents } from "../lib/fetchEvents";
+import { useStudyFilters } from "../lib/FilterProvider";
 import {
   bucketLocations,
   bucketsForScope,
@@ -19,9 +20,7 @@ import {
   type UsaLevel,
 } from "../lib/mapData";
 import { summarizeSessions } from "../lib/reporting";
-import { supabase } from "../lib/supabase";
 import { useLiveReload } from "../lib/useLiveReload";
-import type { CaseRecord, Filters } from "../lib/types";
 
 const UsageMap = lazy(async () => {
   const mod = await import("../components/UsageMap");
@@ -29,7 +28,7 @@ const UsageMap = lazy(async () => {
 });
 
 export function MapPage() {
-  const [cases, setCases] = useState<CaseRecord[]>([]);
+  const { filters, setFilters, bounds, cases } = useStudyFilters();
   const [error, setError] = useState<string | null>(null);
   const [placing, setPlacing] = useState(false);
   const [buckets, setBuckets] = useState<LocationBucket[]>([]);
@@ -40,36 +39,6 @@ export function MapPage() {
   const [grain, setGrain] = useState<MapGrain>("country");
   const [scope, setScope] = useState<MapScope>("world");
   const [usaLevel, setUsaLevel] = useState<UsaLevel>("state");
-  const [filters, setFilters] = useState<Filters>(() => {
-    const { from, to } = rangeForPreset("last30");
-    return {
-      preset: "last30",
-      from,
-      to,
-      caseIds: [],
-      eventTypes: [],
-      deliveryContexts: [],
-      deviceTypes: [],
-      search: "",
-      includeNonProduction: true,
-    };
-  });
-
-  const bounds = useMemo(
-    () => (filters.preset === "custom" ? { from: filters.from, to: filters.to } : rangeForPreset(filters.preset)),
-    [filters.from, filters.preset, filters.to],
-  );
-
-  useEffect(() => {
-    void supabase
-      .from("cases")
-      .select("*")
-      .order("display_name")
-      .then(({ data, error: err }) => {
-        if (err) setError("Unable to load cases.");
-        else setCases((data ?? []) as CaseRecord[]);
-      });
-  }, []);
 
   const load = useCallback(async () => {
     setError(null);

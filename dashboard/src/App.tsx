@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { RequireAuth } from "./RequireAuth";
 import { AccessPage } from "./pages/AccessPage";
+import { CasePage } from "./pages/CasePage";
 import { CasesPage } from "./pages/CasesPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { EventsPage } from "./pages/EventsPage";
@@ -17,6 +18,7 @@ export default function App() {
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/map" element={<MapPage />} />
         <Route path="/sessions/:sessionId" element={<SessionPage />} />
+        <Route path="/cases/:caseKey" element={<CasePage />} />
         <Route path="/cases" element={<CasesPage />} />
         <Route path="/access" element={<AccessPage />} />
         <Route path="/events" element={<EventsPage />} />

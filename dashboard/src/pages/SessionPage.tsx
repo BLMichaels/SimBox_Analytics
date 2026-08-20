@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { CaseLink, OutcomeBadge } from "../components/CaseLink";
 import { DataTable, type Column } from "../components/DataTable";
 import { downloadCsv } from "../lib/csv";
 import { formatDuration, formatLocalPrecise } from "../lib/dates";
@@ -21,6 +22,7 @@ import type { CaseEventRecord } from "../lib/types";
 
 export function SessionPage() {
   const { sessionId: rawId } = useParams();
+  const navigate = useNavigate();
   const sessionId = rawId ? decodeURIComponent(rawId) : "";
   const [rows, setRows] = useState<CaseEventRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -123,12 +125,22 @@ export function SessionPage() {
         <p className="mt-2 font-mono text-xs break-all text-ink-soft">{sessionId}</p>
         {summary ? (
           <p className="mt-3 max-w-2xl text-sm text-ink-soft">
-            {summary.case_name}. {outcomeLabel(summary.outcome)}. {summary.event_count} recorded
+            <CaseLink caseKey={summary.case_key}>{summary.case_name}</CaseLink>
+            . <OutcomeBadge outcome={summary.outcome} /> · {summary.event_count} recorded
             action{summary.event_count === 1 ? "" : "s"} from {formatLocalPrecise(summary.started_at)} to{" "}
             {formatLocalPrecise(summary.ended_at)}.
           </p>
         ) : null}
         <div className="mt-4 flex flex-wrap gap-2">
+          {summary?.case_key ? (
+            <button
+              type="button"
+              className="border border-line bg-card px-3 py-1.5 text-sm"
+              onClick={() => navigate(`/cases/${encodeURIComponent(summary.case_key)}`)}
+            >
+              Open case dossier
+            </button>
+          ) : null}
           <button type="button" className="border border-line bg-card px-3 py-1.5 text-sm" onClick={exportSession} disabled={!summary}>
             Export session row
           </button>

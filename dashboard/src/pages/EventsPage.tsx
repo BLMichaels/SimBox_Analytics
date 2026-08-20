@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { CaseLink, OutcomeBadge } from "../components/CaseLink";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DataTable, type Column } from "../components/DataTable";
 import { FilterBar } from "../components/FilterBar";
 import { SessionLink } from "../components/SessionLink";
 import { callAdminFunction } from "../lib/adminApi";
 import { downloadCsv, rangeStamp } from "../lib/csv";
-import { formatDuration, formatLocal, rangeForPreset } from "../lib/dates";
+import { formatDuration, formatLocal } from "../lib/dates";
 import { applyClientFilters, fetchCaseEvents } from "../lib/fetchEvents";
+import { useStudyFilters } from "../lib/FilterProvider";
 import {
   dash as dashText,
   eventCsvRow,
   eventLabel,
   eventStamp,
   metaString,
-  outcomeLabel,
   progressionLine,
   sessionWideCsvRow,
   stepLine,
@@ -22,15 +24,15 @@ import {
   unionStepLabels,
   type SessionSummary,
 } from "../lib/reporting";
-import { supabase } from "../lib/supabase";
 import { useLiveReload } from "../lib/useLiveReload";
-import type { CaseEventRecord, CaseRecord, Filters } from "../lib/types";
+import type { CaseEventRecord } from "../lib/types";
 
 const DELETE_CHUNK = 400;
 type LogView = "events" | "sessions";
 
 export function EventsPage() {
-  const [cases, setCases] = useState<CaseRecord[]>([]);
+  const navigate = useNavigate();
+  const { filters, setFilters, bounds, cases } = useStudyFilters();
   const [rows, setRows] = useState<CaseEventRecord[]>([]);
   const [view, setView] = useState<LogView>("events");
   const [selectedEventIds, setSelectedEventIds] = useState<Set<string>>(new Set());
@@ -40,33 +42,6 @@ export function EventsPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const loadGen = useRef(0);
-  const [filters, setFilters] = useState<Filters>(() => {
-    const { from, to } = rangeForPreset("last30");
-    return {
-      preset: "last30",
-      from,
-      to,
-      caseIds: [],
-      eventTypes: [],
-      deliveryContexts: [],
-      deviceTypes: [],
-      search: "",
-      includeNonProduction: true,
-    };
-  });
-
-  const bounds = useMemo(
-    () => (filters.preset === "custom" ? { from: filters.from, to: filters.to } : rangeForPreset(filters.preset)),
-    [filters.from, filters.preset, filters.to],
-  );
-
-  useEffect(() => {
-    void supabase
-      .from("cases")
-      .select("*")
-      .order("display_name")
-      .then(({ data }) => setCases((data ?? []) as CaseRecord[]));
-  }, []);
 
   const load = useCallback(async () => {
     const gen = ++loadGen.current;
@@ -134,7 +109,7 @@ export function EventsPage() {
       key: "case",
       header: "Case",
       sortValue: (r) => r.cases?.display_name ?? "",
-      render: (r) => r.cases?.display_name ?? "—",
+      render: (r) => <CaseLink caseKey={r.cases?.case_key ?? ""}>{r.cases?.display_name ?? "—"}</CaseLink>,
     },
     { key: "event", header: "Action", sortValue: (r) => r.event_type, render: (r) => eventLabel(r.event_type) },
     { key: "step", header: "Step", sortValue: (r) => stepLine(r), render: (r) => stepLine(r) },
@@ -176,12 +151,12 @@ export function EventsPage() {
       sortValue: (r) => r.session_id,
       render: (r) => <SessionLink sessionId={r.session_id} />,
     },
-    { key: "case", header: "Case", sortValue: (r) => r.case_name, render: (r) => r.case_name },
+    { key: "case", header: "Case", sortValue: (r) => r.case_name, render: (r) => <CaseLink caseKey={r.case_key}>{r.case_name}</CaseLink> },
     {
       key: "outcome",
       header: "Outcome",
       sortValue: (r) => r.outcome,
-      render: (r) => outcomeLabel(r.outcome),
+      render: (r) => <OutcomeBadge outcome={r.outcome} />,
     },
     {
       key: "duration",
@@ -440,6 +415,7 @@ export function EventsPage() {
           compact
           selectedIds={selectedSessionIds}
           onSelectedIdsChange={setSelectedSessionIds}
+          onRowClick={(r) => navigate(`/sessions/${encodeURIComponent(r.session_id)}`)}
           emptyTitle="No sessions match these filters"
           emptyBody="Try a wider date range or clear search. Sessions group every action from the same anonymous tab."
         />

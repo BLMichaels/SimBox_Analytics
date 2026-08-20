@@ -51,7 +51,7 @@ export function HelpPage() {
           <code className="font-mono">wix_embedded</code>.
         </li>
         <li>
-          <strong>Confirm events</strong> on Overview and Events. Include seed/test events only while developing.
+          <strong>Confirm events</strong> on Overview, the case dossier, and Events. Include seed/test events only while developing.
         </li>
       </ol>
 

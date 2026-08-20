@@ -18,6 +18,7 @@ type Props<T> = {
   onSelectedIdsChange?: (next: Set<string>) => void;
   compact?: boolean;
   defaultDir?: "asc" | "desc";
+  onRowClick?: (row: T) => void;
 };
 
 export function DataTable<T>({
@@ -31,6 +32,7 @@ export function DataTable<T>({
   onSelectedIdsChange,
   compact,
   defaultDir = "desc",
+  onRowClick,
 }: Props<T>) {
   const [sortKey, setSortKey] = useState(columns[0]?.key ?? "");
   const [dir, setDir] = useState<"asc" | "desc">(defaultDir);
@@ -138,7 +140,9 @@ export function DataTable<T>({
                   className={[
                     "border-b border-line last:border-b-0",
                     checked ? "bg-teal/10" : "",
+                    onRowClick ? "cursor-pointer hover:bg-paper" : "",
                   ].join(" ")}
+                  onClick={onRowClick ? () => onRowClick(row) : undefined}
                 >
                   {selectable ? (
                     <td className="px-3 py-2 align-top">
@@ -146,6 +150,7 @@ export function DataTable<T>({
                         type="checkbox"
                         checked={checked}
                         onChange={() => toggleOne(id)}
+                        onClick={(e) => e.stopPropagation()}
                         aria-label={`Select event ${id}`}
                       />
                     </td>

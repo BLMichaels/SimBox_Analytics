@@ -6,6 +6,7 @@ export function SessionLink({ sessionId }: { sessionId: string }) {
     <Link
       to={`/sessions/${encodeURIComponent(sessionId)}`}
       className="font-mono text-xs text-teal-deep underline-offset-2 hover:underline"
+      onClick={(e) => e.stopPropagation()}
       title={`Open session ${sessionId}`}
     >
       {shortSession(sessionId)}

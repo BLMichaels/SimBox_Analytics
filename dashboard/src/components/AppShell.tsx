@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/auth";
+import { FilterProvider } from "../lib/FilterProvider";
 
 const links = [
   { to: "/dashboard", label: "Overview" },
@@ -36,7 +37,9 @@ export function AppShell() {
                 key={link.to}
                 to={link.to}
                 className={({ isActive }) => {
-                  const related = link.to === "/dashboard" && location.pathname.startsWith("/sessions");
+                  const related =
+                    (link.to === "/dashboard" && location.pathname.startsWith("/sessions")) ||
+                    (link.to === "/cases" && location.pathname.startsWith("/cases/"));
                   return [
                     "rounded-sm px-3 py-2 text-sm whitespace-nowrap",
                     isActive || related
@@ -72,7 +75,9 @@ export function AppShell() {
             </button>
           </header>
           <main id="main" className="flex-1 px-4 py-6 sm:px-8">
-            <Outlet />
+            <FilterProvider>
+              <Outlet />
+            </FilterProvider>
           </main>
         </div>
       </div>

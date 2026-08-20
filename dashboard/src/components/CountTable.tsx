@@ -8,9 +8,20 @@ type Props = {
   empty: string;
   nLabel?: string;
   percentLabel?: string;
+  onRowClick?: (row: CountRow) => void;
+  rowHint?: string;
 };
 
-export function CountTable({ title, caption, rows, empty, nLabel = "n", percentLabel = "%" }: Props) {
+export function CountTable({
+  title,
+  caption,
+  rows,
+  empty,
+  nLabel = "n",
+  percentLabel = "%",
+  onRowClick,
+  rowHint,
+}: Props) {
   return (
     <section className="border border-line bg-card">
       <header className="border-b border-line px-4 py-3">
@@ -36,13 +47,44 @@ export function CountTable({ title, caption, rows, empty, nLabel = "n", percentL
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr key={row.label} className="border-t border-line">
-                  <td className="px-4 py-2">{row.label}</td>
-                  <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">{row.n}</td>
-                  <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">{formatPercent(row.pct)}</td>
-                </tr>
-              ))}
+              {rows.map((row) => {
+                const interactive = Boolean(onRowClick);
+                return (
+                  <tr
+                    key={row.label}
+                    className={[
+                      "border-t border-line",
+                      interactive ? "cursor-pointer hover:bg-paper" : "",
+                    ].join(" ")}
+                    onClick={interactive ? () => onRowClick?.(row) : undefined}
+                    onKeyDown={
+                      interactive
+                        ? (e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              onRowClick?.(row);
+                            }
+                          }
+                        : undefined
+                    }
+                    tabIndex={interactive ? 0 : undefined}
+                    title={interactive ? rowHint : undefined}
+                  >
+                    <td className="px-4 py-2">
+                      <div className="min-w-0">
+                        <span className={interactive ? "text-teal-deep underline-offset-2 hover:underline" : ""}>
+                          {row.label}
+                        </span>
+                        <span className="count-meter-track" aria-hidden>
+                          <span className="count-meter" style={{ width: `${Math.min(100, row.pct * 100)}%` }} />
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">{row.n}</td>
+                    <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">{formatPercent(row.pct)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

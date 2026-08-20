@@ -1,4 +1,4 @@
-import { formatDuration, formatLocal } from "./dates";
+import { formatLocal } from "./dates";
 import type { CaseEventRecord } from "./types";
 
 export function metaString(row: CaseEventRecord, key: string): string {
@@ -329,4 +329,68 @@ export function eventCsvRow(
   };
 }
 
-export { formatDuration };
+export function durationBuckets(sessions: SessionSummary[]): CountRow[] {
+  const timed = sessions.filter((s) => s.elapsed_seconds != null);
+  const bins = [
+    { label: "Under 2 min", test: (s: number) => s < 120 },
+    { label: "2–5 min", test: (s: number) => s >= 120 && s < 300 },
+    { label: "5–10 min", test: (s: number) => s >= 300 && s < 600 },
+    { label: "10–20 min", test: (s: number) => s >= 600 && s < 1200 },
+    { label: "20 min or more", test: (s: number) => s >= 1200 },
+  ];
+  const total = timed.length || 1;
+  return bins.map((bin) => {
+    const n = timed.filter((s) => bin.test(s.elapsed_seconds ?? 0)).length;
+    return { label: bin.label, n, pct: n / total };
+  });
+}
+
+export function weekdayMix(sessions: SessionSummary[]): CountRow[] {
+  const names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const counts = names.map((label) => ({ label, n: 0, pct: 0 }));
+  for (const session of sessions) {
+    const day = new Date(session.started_at).getDay();
+    const row = counts[day];
+    if (row) row.n += 1;
+  }
+  const total = sessions.length || 1;
+  return counts.map((row) => ({ ...row, pct: row.n / total }));
+}
+
+export function hourMix(sessions: SessionSummary[]): CountRow[] {
+  const bins = [
+    { label: "Night (12–5)", test: (h: number) => h < 6 },
+    { label: "Morning (6–11)", test: (h: number) => h >= 6 && h < 12 },
+    { label: "Afternoon (12–17)", test: (h: number) => h >= 12 && h < 18 },
+    { label: "Evening (18–23)", test: (h: number) => h >= 18 },
+  ];
+  const total = sessions.length || 1;
+  return bins.map((bin) => {
+    const n = sessions.filter((s) => bin.test(new Date(s.started_at).getHours())).length;
+    return { label: bin.label, n, pct: n / total };
+  });
+}
+
+export function funnelFromSessions(sessions: SessionSummary[]): CountRow[] {
+  const started = sessions.length;
+  const denom = started || 1;
+  const labels = unionStepLabels(sessions).filter((label) => !/^started$/i.test(label));
+  const rows: CountRow[] = [{ label: "Started", n: started, pct: started / denom }];
+  const seen = new Set<string>(["started"]);
+  for (const label of labels) {
+    const key = label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const n = sessions.filter((s) => s.events.some((e) => stepLine(e) === label)).length;
+    rows.push({ label, n, pct: n / denom });
+  }
+  const completed = sessions.filter((s) => s.outcome === "completed").length;
+  if (!seen.has("completed")) {
+    rows.push({ label: "Completed", n: completed, pct: completed / denom });
+  }
+  return rows;
+}
+
+export function outcomeMix(sessions: SessionSummary[]): CountRow[] {
+  return tally(sessions, (s) => outcomeLabel(s.outcome));
+}
