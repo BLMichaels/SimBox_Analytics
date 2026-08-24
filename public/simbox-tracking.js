@@ -164,6 +164,39 @@
     if (typeof step === "number" && isFinite(step)) lastSlide.step = step;
   }
 
+  var actionSeq = 0;
+
+  function mergeMetricMeta(meta, extra) {
+    if (!extra) return meta;
+    var keys = [
+      "kind",
+      "action",
+      "label",
+      "clock",
+      "stage",
+      "pauseCount",
+      "pauseTotalSec",
+      "pauseAvgSec",
+      "compOn",
+      "compOff"
+    ];
+    var i;
+    for (i = 0; i < keys.length; i++) {
+      var key = keys[i];
+      if (extra[key] === undefined || extra[key] === null) continue;
+      var val = extra[key];
+      if (typeof val === "number") {
+        if (!isFinite(val)) continue;
+        meta[key] = val;
+      } else if (typeof val === "boolean") {
+        meta[key] = val;
+      } else {
+        meta[key] = clip(val, 64);
+      }
+    }
+    return meta;
+  }
+
   function buildPayload(eventType, extra) {
     extra = extra || {};
     rememberSlide(extra);
@@ -180,20 +213,25 @@
     else if (lastSlide.step) meta.step = lastSlide.step;
     if (extra.slideId || lastSlide.id) meta.slideId = clip(extra.slideId || lastSlide.id, 40);
     if (extra.slideTitle || lastSlide.title) meta.slideTitle = clip(extra.slideTitle || lastSlide.title, 64);
+    mergeMetricMeta(meta, extra);
     if (eventType === "case_exited") {
       if (lastSlide.title) meta.lastSlide = lastSlide.title;
       if (lastSlide.step) meta.lastStep = lastSlide.step;
       if (lastSlide.seen) meta.slidesSeen = lastSlide.seen;
     }
     var eventKey = sid + ":" + eventType;
-    if (eventType === "case_checkpoint" && meta.slideId) {
+    if (eventType === "case_checkpoint" && extra.kind === "action" && extra.action) {
+      eventKey = sid + ":act:" + clip(extra.action, 28) + ":" + String(extra._seq || actionSeq);
+    } else if (eventType === "case_checkpoint" && extra.kind === "compression") {
+      eventKey = sid + ":cmp:" + String(extra._seq || actionSeq);
+    } else if (eventType === "case_checkpoint" && meta.slideId) {
       eventKey = sid + ":cp:" + meta.slideId;
     }
     return {
       event_type: eventType,
       case_key: c.caseKey,
       session_id: sid,
-      event_key: eventKey,
+      event_key: clip(eventKey, 180),
       occurred_at: new Date().toISOString(),
       elapsed_seconds: eventType === "case_started" ? 0 : elapsedSeconds(),
       delivery_context: deliveryContext(),
@@ -305,6 +343,22 @@
     }
   }
 
+  /** Timed clinical / compression metrics (unique event_key per call). */
+  function action(info) {
+    try {
+      info = info || {};
+      actionSeq += 1;
+      info._seq = actionSeq;
+      if (!info.kind) info.kind = "action";
+      if (getFlag(STORAGE_STARTED) !== "1") {
+        start(info);
+      }
+      send(buildPayload("case_checkpoint", info), false);
+    } catch (e) {
+      log("action error ignored");
+    }
+  }
+
   function exit() {
     try {
       if (getFlag(STORAGE_EXITED) === "1") {
@@ -340,6 +394,7 @@
     start: start,
     complete: complete,
     checkpoint: checkpoint,
+    action: action,
     exit: exit
   };
 

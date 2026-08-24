@@ -11,7 +11,12 @@ export function metaNumber(row: CaseEventRecord, key: string): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-export function eventLabel(type: string): string {
+export function eventLabel(type: string, row?: CaseEventRecord): string {
+  if (row && type === "case_checkpoint") {
+    const kind = metaString(row, "kind");
+    if (kind === "action") return "Clinical action";
+    if (kind === "compression") return "Compressions";
+  }
   switch (type) {
     case "case_started":
       return "Started";
@@ -73,12 +78,77 @@ export function siteLine(row: CaseEventRecord): string {
 }
 
 export function stepLine(row: CaseEventRecord): string {
+  const kind = metaString(row, "kind");
+  if (kind === "action") {
+    const label = metaString(row, "label") || metaString(row, "action") || "Action";
+    const clock = metaString(row, "clock");
+    const stage = metaNumber(row, "stage");
+    const bits = [label];
+    if (stage != null && stage > 0) bits.push(`Stage ${stage}`);
+    if (clock) bits.push(clock);
+    return bits.join(" · ");
+  }
+  if (kind === "compression") {
+    const count = metaNumber(row, "pauseCount");
+    const total = metaNumber(row, "pauseTotalSec");
+    const avg = metaNumber(row, "pauseAvgSec");
+    const parts = ["Compression interruptions"];
+    if (count != null) parts.push(`${count} pause${count === 1 ? "" : "s"}`);
+    if (total != null) parts.push(`${formatDuration(total)} off`);
+    if (avg != null) parts.push(`avg ${formatDuration(avg)}`);
+    return parts.join(" · ");
+  }
   const title = metaString(row, "slideTitle") || metaString(row, "lastSlide");
   const step = metaNumber(row, "step") ?? metaNumber(row, "lastStep");
   if (title && step != null) return `${title}`;
   if (title) return title;
   if (step != null) return `Step ${step}`;
   return "—";
+}
+
+export type CardiacAction = {
+  action: string;
+  label: string;
+  stage: number | null;
+  clock: string;
+  occurred_at: string;
+};
+
+export type CardiacCompressionSummary = {
+  pauseCount: number;
+  pauseTotalSec: number;
+  pauseAvgSec: number;
+  occurred_at: string;
+};
+
+export function cardiacMetricsFromEvents(events: CaseEventRecord[]): {
+  actions: CardiacAction[];
+  compression: CardiacCompressionSummary | null;
+} {
+  const actions: CardiacAction[] = [];
+  let compression: CardiacCompressionSummary | null = null;
+  const ordered = [...events].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
+  for (const e of ordered) {
+    if (e.event_type !== "case_checkpoint") continue;
+    const kind = metaString(e, "kind");
+    if (kind === "action") {
+      actions.push({
+        action: metaString(e, "action"),
+        label: metaString(e, "label") || metaString(e, "action") || "Action",
+        stage: metaNumber(e, "stage"),
+        clock: metaString(e, "clock"),
+        occurred_at: e.occurred_at,
+      });
+    } else if (kind === "compression") {
+      compression = {
+        pauseCount: metaNumber(e, "pauseCount") ?? 0,
+        pauseTotalSec: metaNumber(e, "pauseTotalSec") ?? 0,
+        pauseAvgSec: metaNumber(e, "pauseAvgSec") ?? 0,
+        occurred_at: e.occurred_at,
+      };
+    }
+  }
+  return { actions, compression };
 }
 
 export type SessionSummary = {

@@ -7,6 +7,7 @@ import { formatDuration, formatLocalPrecise } from "../lib/dates";
 import { fetchCaseEvents } from "../lib/fetchEvents";
 import {
   accessLabel,
+  cardiacMetricsFromEvents,
   dash,
   eventCsvRow,
   eventLabel,
@@ -52,6 +53,7 @@ export function SessionPage() {
 
   const summary = useMemo(() => summarizeSessions(rows)[0] ?? null, [rows]);
   const timeline = useMemo(() => sessionTimeline(rows), [rows]);
+  const cardiac = useMemo(() => cardiacMetricsFromEvents(rows), [rows]);
   const loc = useMemo(() => {
     const source = [...rows].reverse().find((r) => localityOf(r).city || localityOf(r).country) ?? rows[rows.length - 1];
     return source ? localityOf(source) : null;
@@ -70,7 +72,7 @@ export function SessionPage() {
       sortValue: (r) => r.occurred_at,
       render: (r) => <span className="font-mono text-[11px]">{r.occurred_at}</span>,
     },
-    { key: "event", header: "Action", sortValue: (r) => r.event_type, render: (r) => eventLabel(r.event_type) },
+    { key: "event", header: "Action", sortValue: (r) => r.event_type, render: (r) => eventLabel(r.event_type, r) },
     { key: "step", header: "Step", sortValue: (r) => stepLine(r), render: (r) => stepLine(r) },
     {
       key: "elapsed",
@@ -205,6 +207,44 @@ export function SessionPage() {
             <p className="mt-1 text-sm text-ink-soft">
               Every recorded action in this session, in order. Deltas are seconds since the previous action.
             </p>
+            {cardiac.actions.length || cardiac.compression ? (
+              <div className="mb-6 mt-5 grid gap-4 lg:grid-cols-2">
+                <article className="border border-line bg-card p-4">
+                  <h3 className="text-[11px] font-medium tracking-[0.14em] text-ink-soft uppercase">
+                    Code timeline (sim clock)
+                  </h3>
+                  {cardiac.actions.length ? (
+                    <ol className="mt-3 space-y-2 text-sm">
+                      {cardiac.actions.map((a, i) => (
+                        <li key={`${a.action}-${a.clock}-${i}`} className="flex flex-wrap gap-x-3 gap-y-1">
+                          <span className="font-mono text-ink">{a.clock || "—"}</span>
+                          <span className="text-ink">{a.label}</span>
+                          {a.stage != null && a.stage > 0 ? (
+                            <span className="text-ink-soft">Stage {a.stage}</span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <p className="mt-3 text-sm text-ink-soft">No timed clinical actions recorded yet.</p>
+                  )}
+                </article>
+                <article className="border border-line bg-card p-4">
+                  <h3 className="text-[11px] font-medium tracking-[0.14em] text-ink-soft uppercase">
+                    Compression interruptions
+                  </h3>
+                  {cardiac.compression ? (
+                    <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                      <Fact label="Interruptions" value={String(cardiac.compression.pauseCount)} />
+                      <Fact label="Total time off" value={formatDuration(cardiac.compression.pauseTotalSec)} />
+                      <Fact label="Average pause" value={formatDuration(cardiac.compression.pauseAvgSec)} />
+                    </dl>
+                  ) : (
+                    <p className="mt-3 text-sm text-ink-soft">No compression summary in this session.</p>
+                  )}
+                </article>
+              </div>
+            ) : null}
             <ol className="session-rail mt-5 space-y-0">
               {timeline.map((step) => (
                 <li key={step.event.id} className="relative pl-10">
@@ -216,7 +256,7 @@ export function SessionPage() {
                   </div>
                   <article className="mb-4 border border-line bg-card px-4 py-3">
                     <div className="flex flex-wrap items-baseline justify-between gap-2">
-                      <h3 className="text-sm font-medium text-ink">{eventLabel(step.event.event_type)}</h3>
+                      <h3 className="text-sm font-medium text-ink">{eventLabel(step.event.event_type, step.event)}</h3>
                       <p className="font-mono text-[11px] text-ink-soft">{formatLocalPrecise(step.event.occurred_at)}</p>
                     </div>
                     <p className="mt-1 text-sm text-ink">{stepLine(step.event)}</p>

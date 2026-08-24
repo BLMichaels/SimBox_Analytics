@@ -80,3 +80,33 @@ When the learner reaches **Step 4** (`5aNIF0c6vDb`). Sign Out and Debrief after 
 | Same URL inside the Wix iframe | `wix_embedded` |
 
 CORS Origin is still `https://blmichaels.github.io` in both cases.
+
+## SimBox_Pediatric_Cardiac_Codes
+
+This case records stage timings, clinical actions, and compression interruption stats (the same data shown on the Summary / Print Summary slide).
+
+### Extra files (case repo root)
+
+- `vendor/jspdf.umd.min.js` — required for Print Summary
+- `simbox-tracking.js`
+- `simbox-case-hooks.js`
+- `simbox-cardiac-hooks.js` — polls Storyline variables and emits coded metrics
+
+### `index.html`
+
+1. Load jsPDF **before** `story_content/user.js`.
+2. Insert the Pediatric snippet from `public/index.html.snippet.pediatric-cardiac.html` **after** `user.js`.
+
+### What gets captured
+
+| Source | Platform event |
+|--------|----------------|
+| Enter Stage 1 | `case_started` |
+| Stage 1 / 2 / 3 / Debrief / Summary slides | funnel `case_checkpoint` |
+| Storyline vars (`One1`…`Five3`, epi, defib, ROSC, …) | `case_checkpoint` with `metadata.kind=action`, `action`, `clock`, `stage` |
+| `CompressionPauseCount` / Total / Average | `case_checkpoint` with `metadata.kind=compression` |
+| Summary Slide | `case_completed` |
+
+### Print Summary in Wix
+
+jsPDF must be present (fixes the “PDF generator is not available” alert). Export uses a blob download / new-tab fallback when the iframe blocks `doc.save()`. If Wix still blocks downloads, open the GitHub Pages URL in a top-level tab and print there, or add `allow-downloads` on the Wix embed iframe.

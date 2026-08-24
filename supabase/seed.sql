@@ -15,7 +15,8 @@ values
   ('SimBox_Trach', 'SimBox Trach', true, '1.0.0'),
   ('SimBox_Vomiting_Baby', 'SimBox Vomiting Baby', true, '1.0.0'),
   ('SimBox_Suicide_Screening_ASQ_C-SSRS', 'SimBox Suicide Screening ASQ / C-SSRS', true, '1.0.0'),
-  ('SimBox_Suicide_Assessment_BSSA_SAFE-T', 'SimBox Suicide Assessment BSSA / SAFE-T', true, '1.0.0')
+  ('SimBox_Suicide_Assessment_BSSA_SAFE-T', 'SimBox Suicide Assessment BSSA / SAFE-T', true, '1.0.0'),
+  ('SimBox_Pediatric_Cardiac_Codes', 'SimBox Pediatric Cardiac Codes', true, '1.0.0')
 on conflict (case_key) do update
   set display_name = excluded.display_name,
       active = excluded.active,

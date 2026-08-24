@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CaseEventRecord } from "./types";
 import {
+  cardiacMetricsFromEvents,
   durationBuckets,
   filterSessionsByMinDuration,
   funnelFromSessions,
@@ -9,6 +10,7 @@ import {
   sessionLocalClock,
   sessionTimeline,
   siteCohorts,
+  stepLine,
   studyBrief,
   summarizeSessions,
   timeOnStep,
@@ -263,5 +265,30 @@ describe("sessionTimeline", () => {
     ]);
     expect(steps.map((s) => s.event.event_type)).toEqual(["case_started", "case_completed"]);
     expect(steps[1].deltaSec).toBe(10);
+  });
+});
+
+describe("cardiacMetricsFromEvents", () => {
+  it("extracts timed actions and compression summary", () => {
+    const rows = [
+      event({
+        id: "1",
+        event_type: "case_checkpoint",
+        occurred_at: "2026-08-21T18:31:50.000Z",
+        metadata: { kind: "action", action: "epinephrine", label: "Epinephrine administered", stage: 2, clock: "0:53" },
+      }),
+      event({
+        id: "2",
+        event_type: "case_checkpoint",
+        occurred_at: "2026-08-21T18:32:00.000Z",
+        metadata: { kind: "compression", action: "compression_summary", pauseCount: 4, pauseTotalSec: 19, pauseAvgSec: 5 },
+      }),
+    ];
+    const metrics = cardiacMetricsFromEvents(rows);
+    expect(metrics.actions).toHaveLength(1);
+    expect(metrics.actions[0]?.label).toBe("Epinephrine administered");
+    expect(metrics.compression?.pauseCount).toBe(4);
+    expect(stepLine(rows[0]!)).toContain("Epinephrine");
+    expect(stepLine(rows[1]!)).toContain("4 pauses");
   });
 });

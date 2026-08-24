@@ -129,7 +129,7 @@ export function EventsPage() {
       sortValue: (r) => r.cases?.display_name ?? "",
       render: (r) => <CaseLink caseKey={r.cases?.case_key ?? ""}>{r.cases?.display_name ?? "—"}</CaseLink>,
     },
-    { key: "event", header: "Action", sortValue: (r) => r.event_type, render: (r) => eventLabel(r.event_type) },
+    { key: "event", header: "Action", sortValue: (r) => r.event_type, render: (r) => eventLabel(r.event_type, r) },
     { key: "step", header: "Step", sortValue: (r) => stepLine(r), render: (r) => stepLine(r) },
     {
       key: "session",

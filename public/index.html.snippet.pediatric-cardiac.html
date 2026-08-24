@@ -1,0 +1,25 @@
+<!-- Pediatric Cardiac Codes — insert AFTER story_content/user.js. Load jsPDF BEFORE user.js. -->
+<script src="vendor/jspdf.umd.min.js"></script>
+<!-- triggers.js + user.js already above in the published package -->
+<script>
+  window.SIMBOX_TRACKING_CONFIG = {
+    caseKey: "SimBox_Pediatric_Cardiac_Codes",
+    endpointUrl: "https://ututhxkwvhpnoyrfjzbu.supabase.co/functions/v1/record-simbox-event",
+    appVersion: "1.0.0",
+    debug: false,
+    startSlideIds: ["6EN1aOEQaV9"],
+    completeSlideIds: ["5sP0hesvj3X"],
+    startSlideTitles: ["stage 1"],
+    completeSlideTitles: ["summary slide"],
+    steps: [
+      { id: "6EN1aOEQaV9", title: "Stage 1", step: 1 },
+      { id: "6cRxwu8R9pu", title: "Stage 2", step: 2 },
+      { id: "6Ila7r9C6xy", title: "Stage 3", step: 3 },
+      { id: "6qaiSvX1uYA", title: "Debrief", step: 4 },
+      { id: "5sP0hesvj3X", title: "Summary Slide", step: 5 }
+    ]
+  };
+</script>
+<script src="simbox-tracking.js"></script>
+<script src="simbox-case-hooks.js"></script>
+<script src="simbox-cardiac-hooks.js"></script>
