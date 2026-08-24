@@ -12,6 +12,8 @@
     { varName: "Four1", action: "pads_applied", label: "Applied pads", stage: 1, step: 1 },
     { varName: "Five1", action: "iv_io_access", label: "IV/IO access", stage: 1, step: 1 },
     { varName: "Six1", action: "rhythm_check", label: "Rhythm/pulse check", stage: 1, step: 1 },
+    { varName: "Seven1", action: "epinephrine", label: "Epinephrine administered", stage: 1, step: 1 },
+    { varName: "Eight1", action: "defib", label: "Defib delivered", stage: 1, step: 1 },
 
     { varName: "SimBegin2", action: "stage2_begin", label: "Begin Stage 2", stage: 2, step: 2 },
     { varName: "One2", action: "rhythm_check", label: "Rhythm/pulse check", stage: 2, step: 2 },
