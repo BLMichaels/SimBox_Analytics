@@ -6,7 +6,6 @@ insert into public.cases (case_key, display_name, active, app_version)
 values
   ('SimBox_DKA', 'SimBox DKA', true, '1.0.0'),
   ('SimBox_Abdominal_Trauma', 'SimBox Abdominal Trauma', true, '1.0.0'),
-  ('SimBox_Suicide_Screen_Nursing', 'SimBox Suicide Screen (Nursing)', true, '1.0.0'),
   ('SimBox_Penetrating_Trauma', 'SimBox Penetrating Trauma', true, '1.0.0'),
   ('SimBox_Asthma', 'SimBox Asthma', true, '1.0.0'),
   ('SimBox_Bronchiolitis', 'SimBox Bronchiolitis', true, '1.0.0'),
@@ -15,7 +14,7 @@ values
   ('SimBox_Trach', 'SimBox Trach', true, '1.0.0'),
   ('SimBox_Vomiting_Baby', 'SimBox Vomiting Baby', true, '1.0.0'),
   ('SimBox_Suicide_Screening_ASQ_C-SSRS', 'SimBox Suicide Screening ASQ / C-SSRS', true, '1.0.0'),
-  ('SimBox_Suicide_Assessment_BSSA_SAFE-T', 'SimBox Suicide Assessment BSSA / SAFE-T', true, '1.0.0'),
+  ('SimBox_Suicide_Assessment_BSSA_SAFE-T', 'SimBox Suicide Screen (Nursing / BSSA SAFE-T)', true, '1.0.0'),
   ('SimBox_Pediatric_Cardiac_Codes', 'SimBox Pediatric Cardiac Codes', true, '1.0.0')
 on conflict (case_key) do update
   set display_name = excluded.display_name,
@@ -28,7 +27,7 @@ with case_ids as (
   where case_key in (
     'SimBox_DKA',
     'SimBox_Abdominal_Trauma',
-    'SimBox_Suicide_Screen_Nursing',
+    'SimBox_Suicide_Assessment_BSSA_SAFE-T',
     'SimBox_Penetrating_Trauma'
   )
 ),
