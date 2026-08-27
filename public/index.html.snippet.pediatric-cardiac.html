@@ -1,5 +1,10 @@
-<!-- Pediatric Cardiac Codes — insert AFTER story_content/user.js. Load jsPDF BEFORE user.js. -->
+<!-- Pediatric Cardiac Codes — after Storyline publish:
+  1) Load jsPDF + logo BEFORE story_content/user.js
+  2) Insert tracking block AFTER story_content/user.js
+  Keep vendor/jspdf.umd.min.js, vendor/simbox-logo-data.js, vendor/simbox-logo-pdf.png in the package.
+-->
 <script src="vendor/jspdf.umd.min.js"></script>
+<script src="vendor/simbox-logo-data.js"></script>
 <!-- triggers.js + user.js already above in the published package -->
 <script>
   window.SIMBOX_TRACKING_CONFIG = {
