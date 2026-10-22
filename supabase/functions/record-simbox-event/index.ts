@@ -123,6 +123,13 @@ async function fetchJson(url: string, timeoutMs: number): Promise<Record<string,
   }
 }
 
+function stringField(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
 function applyLocality(out: Record<string, string | number>, body: Record<string, unknown>): void {
   const city = body.city;
   const region = body.region ?? body.regionName ?? body.region_name;
@@ -146,12 +153,179 @@ function applyLocality(out: Record<string, string | number>, body: Record<string
     out.latitude = lat;
     out.longitude = lng;
   }
+
+  const connection =
+    body.connection && typeof body.connection === "object" && !Array.isArray(body.connection)
+      ? (body.connection as Record<string, unknown>)
+      : null;
+  const company =
+    body.company && typeof body.company === "object" && !Array.isArray(body.company)
+      ? (body.company as Record<string, unknown>)
+      : null;
+  const org = stringField(
+    company?.name,
+    connection?.org,
+    connection?.isp,
+    body.org,
+    body.isp,
+    body.organization,
+    body.as_name,
+  );
+  if (org && !out.networkOrg) out.networkOrg = clipMeta(org, 96);
+}
+
+/** Heuristic: IP org/ISP looks like a hospital / health system network. */
+function hospitalFromNetworkOrg(org: string): string | null {
+  const cleaned = org.replace(/\s+/g, " ").trim();
+  if (!cleaned || cleaned.length < 4) return null;
+  const lower = cleaned.toLowerCase();
+  // Home broadband, clouds, and security proxies are not the hospital.
+  const notHospital =
+    /\b(comcast|verizon|at&?t|spectrum|cox|charter|centurylink|frontier|t-mobile|sprint|optimum|xfinity|google fiber|starlink|cloudflare|amazon|aws|microsoft|azure|digitalocean|netskope|zscaler|palo alto|penteldata|level 3|lumen|cogent|hurricane electric)\b/i;
+  if (notHospital.test(lower)) return null;
+  // Insurers and benefits brands share the word "health" but are not the facility.
+  const insurer =
+    /\b(unitedhealth|united health|elevance|anthem|cigna|aetna|humana|blue cross|bluecross|health net|centene|molina|oscar health|kaiser permanente insurance)\b/i;
+  if (insurer.test(lower)) return null;
+  const hospitalLike =
+    /\b(hospital|hospitals|medical center|med(?:ical)?\s*ctr|health system|healthcare|health care|health services?|children'?s hospital|clinic|indian health|dignity health|banner health|trinity health|tenet|geisinger|wellstar|piedmont|novant|atrium health|advocate health|ascension|kaiser|mayo clinic|cedars[- ]sinai|emory|yale.?new.?haven|intermountain|providence health|adventhealth|hca healthcare|commonspirit|sutter health|northwell|mass general|cleveland clinic|johns hopkins)\b/i;
+  if (!hospitalLike.test(lower)) return null;
+  return clipMeta(cleaned, 96);
 }
 
 function asCoord(value: unknown, min: number, max: number): number | null {
   const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
   if (!Number.isFinite(n) || n < min || n > max) return null;
   return Math.round(n * 1000) / 1000;
+}
+
+/**
+ * Notify PECC Support Tool so the hospital Activities page gets a Simulation
+ * Facilitation row. Failures are logged only — analytics ingest must not fail.
+ *
+ * Secrets (SimBox project):
+ *   PECC_SIMBOX_INGEST_URL  — https://…/functions/v1/ingest-simbox-activity
+ *   SIMBOX_INGEST_SECRET    — shared with ImPACTS SIMBOX_INGEST_SECRET
+ */
+type HospitalDirectoryMatch = {
+  matched?: boolean;
+  facility_id?: string | null;
+  name?: string | null;
+  source?: string | null;
+  confidence?: string | null;
+};
+
+function peccResolveUrl(): string {
+  const explicit = Deno.env.get("PECC_SIMBOX_RESOLVE_URL")?.trim() ?? "";
+  if (explicit) return explicit;
+  const ingest = Deno.env.get("PECC_SIMBOX_INGEST_URL")?.trim() ?? "";
+  return ingest.replace(/ingest-simbox-activity\/?$/, "resolve-simbox-hospital");
+}
+
+/**
+ * Ask the PECC hospital directory which single facility this locality is.
+ * High confidence: one facility shares the ZIP, or the network org names one campus.
+ * Medium: the city has exactly one hospital, or a system with several campuses.
+ */
+async function resolveHospitalDirectory(opts: {
+  city?: string;
+  region?: string;
+  postal?: string;
+  org?: string;
+}): Promise<HospitalDirectoryMatch | null> {
+  const secret = Deno.env.get("SIMBOX_INGEST_SECRET")?.trim() ?? "";
+  const url = peccResolveUrl();
+  if (!secret || !url || !url.includes("resolve-simbox-hospital")) return null;
+  if (!opts.city && !opts.postal && !opts.org) return null;
+
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2000);
+    const res = await fetch(url, {
+      method: "POST",
+      signal: ctrl.signal,
+      headers: {
+        "Content-Type": "application/json",
+        "x-simbox-ingest-secret": secret,
+      },
+      body: JSON.stringify({
+        city: opts.city ?? "",
+        region: opts.region ?? "",
+        postal: opts.postal ?? "",
+        org: opts.org ?? "",
+      }),
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.error("record-simbox-event: hospital resolve failed", res.status, text.slice(0, 160));
+      return null;
+    }
+    return (await res.json()) as HospitalDirectoryMatch;
+  } catch (err) {
+    console.error("record-simbox-event: hospital resolve error", String(err));
+    return null;
+  }
+}
+
+async function notifyPeccActivity(opts: {
+  siteKey?: string;
+  facilityId?: string;
+  caseKey: string;
+  caseDisplayName: string;
+  sessionId: string;
+  occurredAt: string;
+  elapsedSeconds: number | null;
+}): Promise<void> {
+  const url = Deno.env.get("PECC_SIMBOX_INGEST_URL")?.trim() ?? "";
+  const secret = Deno.env.get("SIMBOX_INGEST_SECRET")?.trim() ?? "";
+  if (!url || !secret) {
+    console.warn("record-simbox-event: PECC ingest skipped (URL or secret not configured)");
+    return;
+  }
+  const siteKey = opts.siteKey?.trim() ?? "";
+  const facilityId = opts.facilityId?.trim() ?? "";
+  if (siteKey && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/.test(siteKey)) return;
+  if (!siteKey && !facilityId) return;
+
+  const hours =
+    opts.elapsedSeconds != null && opts.elapsedSeconds > 0
+      ? Math.round((opts.elapsedSeconds / 3600) * 4) / 4 // nearest 0.25h
+      : 0;
+
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2500);
+    const res = await fetch(url, {
+      method: "POST",
+      signal: ctrl.signal,
+      headers: {
+        "Content-Type": "application/json",
+        "x-simbox-ingest-secret": secret,
+      },
+      body: JSON.stringify({
+        ...(siteKey ? { site_key: siteKey } : {}),
+        ...(facilityId ? { facility_id: facilityId } : {}),
+        case_key: opts.caseKey,
+        case_display_name: opts.caseDisplayName,
+        session_id: opts.sessionId,
+        occurred_at: opts.occurredAt,
+        hours: hours > 0 ? hours : 0,
+        participants: null,
+      }),
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.error(
+        "record-simbox-event: PECC ingest failed",
+        res.status,
+        text.slice(0, 200),
+      );
+    }
+  } catch (err) {
+    console.error("record-simbox-event: PECC ingest error", String(err));
+  }
 }
 
 async function lookupNetworkLocality(req: Request): Promise<Record<string, string | number>> {
@@ -172,7 +346,16 @@ async function lookupNetworkLocality(req: Request): Promise<Record<string, strin
   const encoded = encodeURIComponent(ip);
   const ipwho = await fetchJson(`https://ipwho.is/${encoded}`, 1200);
   if (ipwho && ipwho.success !== false) applyLocality(out, ipwho);
-  if (out.city && out.country && out.latitude != null && out.longitude != null) return out;
+  // Keep fetching if locality or hospital-network org is still incomplete.
+  if (
+    out.city &&
+    out.country &&
+    out.latitude != null &&
+    out.longitude != null &&
+    out.networkOrg
+  ) {
+    return out;
+  }
   const ipapi = await fetchJson(`https://ipapi.co/${encoded}/json/`, 1200);
   if (ipapi && !ipapi.error) applyLocality(out, ipapi);
   return out;
@@ -234,10 +417,25 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const payload = validated.value;
   const geo = await lookupNetworkLocality(req);
   const clientMeta = { ...payload.metadata };
-  for (const key of ["city", "region", "country", "postal", "timezone", "latitude", "longitude", "county", "geoSource"]) {
+  for (const key of [
+    "city",
+    "region",
+    "country",
+    "postal",
+    "timezone",
+    "latitude",
+    "longitude",
+    "county",
+    "geoSource",
+    "networkOrg",
+    "hospitalName",
+    "hospitalSource",
+    "hospitalFacilityId",
+    "hospitalConfidence",
+  ]) {
     delete clientMeta[key];
   }
-  const metadata = {
+  const metadata: Record<string, unknown> = {
     ...clientMeta,
     ...geo,
   };
@@ -255,9 +453,52 @@ Deno.serve(async (req: Request): Promise<Response> => {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
+  // Prefer an explicit site code mapped in the sites registry.
+  const siteKeyRaw = typeof clientMeta.siteKey === "string" ? clientMeta.siteKey.trim() : "";
+  if (siteKeyRaw && /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/.test(siteKeyRaw)) {
+    const { data: siteRow } = await supabase
+      .from("sites")
+      .select("display_name")
+      .eq("site_key", siteKeyRaw)
+      .eq("active", true)
+      .maybeSingle();
+    if (siteRow?.display_name) {
+      metadata.hospitalName = clipMeta(String(siteRow.display_name), 96);
+      metadata.hospitalSource = "site_key";
+      metadata.hospitalConfidence = "high";
+    }
+  }
+
+  // Match city / ZIP / network org against the PECC hospital directory.
+  if (!metadata.hospitalName) {
+    const match = await resolveHospitalDirectory({
+      city: typeof geo.city === "string" ? geo.city : "",
+      region: typeof geo.region === "string" ? geo.region : "",
+      postal: typeof geo.postal === "string" ? geo.postal : "",
+      org: typeof geo.networkOrg === "string" ? geo.networkOrg : "",
+    });
+    if (match?.matched && match.name) {
+      metadata.hospitalName = clipMeta(match.name, 96);
+      metadata.hospitalSource = clipMeta(match.source || "directory", 32);
+      metadata.hospitalConfidence = match.confidence === "high" ? "high" : "medium";
+      if (match.facility_id) metadata.hospitalFacilityId = clipMeta(match.facility_id, 32);
+    }
+  }
+
+  // Last resort: the IP org string itself looks like a hospital, but the directory
+  // did not confirm a single facility. Record the name only.
+  if (!metadata.hospitalName && typeof geo.networkOrg === "string") {
+    const fromOrg = hospitalFromNetworkOrg(String(geo.networkOrg));
+    if (fromOrg) {
+      metadata.hospitalName = fromOrg;
+      metadata.hospitalSource = "keyword";
+      metadata.hospitalConfidence = "low";
+    }
+  }
+
   const { data: caseRow, error: caseError } = await supabase
     .from("cases")
-    .select("id, active")
+    .select("id, active, display_name")
     .eq("case_key", payload.case_key)
     .maybeSingle();
 
@@ -298,6 +539,35 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
     console.error("record-simbox-event: insert failed", insertError.code);
     return json({ error: "Unable to record event" }, 500, cors.origin);
+  }
+
+  // Fire-and-forget: PECC Activities when a known hospital finishes a case.
+  // Directory guesses that are only medium confidence stay on the analytics dashboard.
+  if (payload.event_type === "case_completed") {
+    const siteKey =
+      typeof metadata.siteKey === "string" ? String(metadata.siteKey).trim() : "";
+    const facilityId =
+      typeof metadata.hospitalFacilityId === "string"
+        ? String(metadata.hospitalFacilityId).trim()
+        : "";
+    const confidence =
+      typeof metadata.hospitalConfidence === "string" ? metadata.hospitalConfidence : "";
+    const canNotify = Boolean(siteKey) || (Boolean(facilityId) && confidence === "high");
+    if (canNotify) {
+      const peccNotify = notifyPeccActivity({
+        siteKey: siteKey || undefined,
+        facilityId: siteKey ? undefined : facilityId,
+        caseKey: payload.case_key,
+        caseDisplayName: String(caseRow.display_name || payload.case_key),
+        sessionId: payload.session_id,
+        occurredAt: payload.occurred_at,
+        elapsedSeconds: payload.elapsed_seconds,
+      });
+      const runtime = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } })
+        .EdgeRuntime;
+      if (runtime?.waitUntil) runtime.waitUntil(peccNotify);
+      else void peccNotify;
+    }
   }
 
   return json({ ok: true, duplicate: false }, 200, cors.origin);

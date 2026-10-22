@@ -11,6 +11,8 @@ import {
   dash,
   eventCsvRow,
   eventLabel,
+  hospitalConfidenceLabel,
+  hospitalSourceLabel,
   localityOf,
   metaString,
   outcomeLabel,
@@ -187,7 +189,7 @@ export function SessionPage() {
             <article className="border border-line bg-card p-4">
               <h2 className="text-[11px] font-medium tracking-[0.14em] text-ink-soft uppercase">Locality</h2>
               <p className="mt-2 text-[12px] leading-5 text-ink-soft">
-                Network locality is resolved from the request at ingest. Named user and hospital are not in the Storyline player unless a site code is added to the case URL.
+                City-level locality comes from IP geolocation. A hospital is named when a site code is registered, when the ZIP matches one PECC hospital, or when that city has only one hospital.
               </p>
               <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
                 <Fact label="City" value={dash(loc?.city ?? "")} />
@@ -196,7 +198,20 @@ export function SessionPage() {
                 <Fact label="Country" value={dash(loc?.country ?? "")} />
                 <Fact label="Timezone" value={dash(loc?.timezone ?? "")} />
                 <Fact label="Site code" value={summary?.site ?? "Not provided"} />
-                <Fact label="Hospital name" value="Not collected" />
+                <Fact label="Hospital" value={summary?.hospital ?? "Not identified"} />
+                <Fact
+                  label="Hospital source"
+                  value={hospitalSourceLabel(summary?.hospitalSource ?? loc?.hospitalSource ?? "")}
+                />
+                <Fact
+                  label="Confidence"
+                  value={hospitalConfidenceLabel(summary?.hospitalConfidence ?? loc?.hospitalConfidence ?? "")}
+                />
+                <Fact
+                  label="Facility ID"
+                  value={dash(summary?.hospitalFacilityId || loc?.hospitalFacilityId || "")}
+                />
+                <Fact label="Network org" value={dash(summary?.networkOrg || loc?.networkOrg || "")} />
                 <Fact label="User identity" value="Not collected" />
               </dl>
             </article>

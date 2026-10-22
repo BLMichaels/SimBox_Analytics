@@ -249,7 +249,8 @@ export function CasesPage() {
           <h3 className="mt-6 text-sm font-medium">GitHub repository configuration</h3>
           <p className="mt-2 text-xs leading-5 text-ink-soft">
             Also include <code className="font-mono">simbox-case-hooks.js</code> so slide checkpoints fire automatically.
-            Optional site code: append <code className="font-mono">?simbox_site=HOSP01</code> to the case URL.
+            Optional site code: append <code className="font-mono">?simbox_site=EMORY_ED</code> to the case URL
+            (register the code in the <code className="font-mono">sites</code> table to show the hospital name).
           </p>
           <pre className="mt-2 overflow-x-auto bg-ink p-3 text-xs text-card">
             <code>{snippet}</code>

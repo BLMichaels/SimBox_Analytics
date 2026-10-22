@@ -84,6 +84,8 @@ export function applyClientFilters(
     const region = String(r.metadata?.region ?? "");
     const postal = String(r.metadata?.postal ?? "");
     const site = String(r.metadata?.siteKey ?? "");
+    const hospital = String(r.metadata?.hospitalName ?? "");
+    const networkOrg = String(r.metadata?.networkOrg ?? "");
     return (
       name.toLowerCase().includes(s) ||
       key.toLowerCase().includes(s) ||
@@ -91,7 +93,9 @@ export function applyClientFilters(
       city.toLowerCase().includes(s) ||
       region.toLowerCase().includes(s) ||
       postal.toLowerCase().includes(s) ||
-      site.toLowerCase().includes(s)
+      site.toLowerCase().includes(s) ||
+      hospital.toLowerCase().includes(s) ||
+      networkOrg.toLowerCase().includes(s)
     );
   });
 }

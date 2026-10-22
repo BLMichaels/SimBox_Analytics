@@ -149,6 +149,12 @@ export function EventsPage() {
     { key: "country", header: "Country", sortValue: (r) => metaString(r, "country"), render: (r) => dashText(metaString(r, "country")) },
     { key: "site", header: "Site", sortValue: (r) => metaString(r, "siteKey"), render: (r) => dashText(metaString(r, "siteKey")) },
     {
+      key: "hospital",
+      header: "Hospital",
+      sortValue: (r) => metaString(r, "hospitalName"),
+      render: (r) => dashText(metaString(r, "hospitalName")),
+    },
+    {
       key: "access",
       header: "Access",
       sortValue: (r) => r.delivery_context ?? "",
@@ -217,6 +223,7 @@ export function EventsPage() {
     { key: "postal", header: "Postal", sortValue: (r) => r.postal, render: (r) => dashText(r.postal) },
     { key: "country", header: "Country", sortValue: (r) => r.country, render: (r) => dashText(r.country) },
     { key: "site", header: "Site", sortValue: (r) => r.site, render: (r) => r.site },
+    { key: "hospital", header: "Hospital", sortValue: (r) => r.hospital, render: (r) => r.hospital },
     { key: "access", header: "Access", sortValue: (r) => r.access, render: (r) => r.access },
     { key: "device", header: "Device", sortValue: (r) => r.device, render: (r) => r.device },
   ];

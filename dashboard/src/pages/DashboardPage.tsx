@@ -5,6 +5,7 @@ import { CountTable } from "../components/CountTable";
 import { DashboardCharts } from "../components/DashboardCharts";
 import { DataTable, type Column } from "../components/DataTable";
 import { FilterBar } from "../components/FilterBar";
+import { HospitalTable } from "../components/HospitalTable";
 import { SessionLink } from "../components/SessionLink";
 import { StudyBrief } from "../components/StudyBrief";
 import { StudyLedger } from "../components/StudyLedger";
@@ -209,7 +210,7 @@ export function DashboardPage() {
 
       <p className="mt-2 mb-6 text-[11px] text-ink-soft">
         Session outcomes in this extract: {completedSessions} completed, {exitedSessions} exited, {inProgress} in
-        progress. Named user and hospital are not collected. Click any case name or table row to drill in.
+        progress. Hospital is identified from a site code, a unique ZIP, or the only hospital in that city. Click any case name or table row to drill in.
       </p>
 
       <div className="mb-4">
@@ -294,9 +295,13 @@ export function DashboardPage() {
           nLabel="Reached"
           empty="No checkpoints in this range. Add simbox-case-hooks.js or Storyline checkpoint calls."
         />
+        <HospitalTable
+          sessions={sessions}
+          onSelect={(hospital) => setFilters({ ...filters, search: hospital })}
+        />
         <CountTable
           title="Site cohorts"
-          caption="Optional ?simbox_site= code. Compare completion rate across programs without naming hospitals."
+          caption="Optional ?simbox_site= code mapped in the sites registry (or shown as the raw code)."
           rows={sites.map((s) => ({
             label: `${s.label} · ${formatPercent(s.completion_rate)} complete · median ${formatDuration(s.median_seconds)}`,
             n: s.starts,

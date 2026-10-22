@@ -36,17 +36,20 @@ type Props = {
   onGrainChange: (grain: MapGrain) => void;
 };
 
-const STYLE: StyleSpecification = {
+/** CARTO basemaps now paint an API-key watermark instead of a map. OpenFreeMap does not. */
+const BASEMAP_STYLE = "https://tiles.openfreemap.org/styles/positron";
+
+const OSM_FALLBACK: StyleSpecification = {
   version: 8,
   sources: {
-    carto: {
+    osm: {
       type: "raster",
-      tiles: ["https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png"],
+      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
       tileSize: 256,
-      attribution: "© OpenStreetMap © CARTO",
+      attribution: "© OpenStreetMap",
     },
   },
-  layers: [{ id: "carto", type: "raster", source: "carto" }],
+  layers: [{ id: "osm", type: "raster", source: "osm" }],
 };
 
 const US_MAX_BOUNDS: LngLatBoundsLike = [
@@ -338,7 +341,7 @@ export function UsageMap({ buckets, layer, group, grain, scope, usaLevel, metric
     if (!host.current || mapRef.current) return;
     const map = new MapLibreMap({
       container: host.current,
-      style: STYLE,
+      style: BASEMAP_STYLE,
       center: [-96, 38],
       zoom: 3.2,
     });
@@ -351,6 +354,15 @@ export function UsageMap({ buckets, layer, group, grain, scope, usaLevel, metric
       addUsageLayers(map);
       void applyLayers(map);
     };
+    let usedFallback = false;
+    map.on("error", (event) => {
+      if (usedFallback || map.isStyleLoaded()) return;
+      const message = String(event.error?.message ?? "");
+      if (!/style|sprite|glyph|tilejson/i.test(message)) return;
+      usedFallback = true;
+      map.setStyle(OSM_FALLBACK);
+      map.once("style.load", boot);
+    });
     map.on("load", boot);
     if (map.loaded() || map.isStyleLoaded()) boot();
 

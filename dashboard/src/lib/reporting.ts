@@ -45,6 +45,11 @@ export type Locality = {
   country: string;
   timezone: string;
   siteKey: string;
+  hospitalName: string;
+  hospitalSource: string;
+  hospitalFacilityId: string;
+  hospitalConfidence: string;
+  networkOrg: string;
   latitude: number | null;
   longitude: number | null;
 };
@@ -58,6 +63,11 @@ export function localityOf(row: CaseEventRecord): Locality {
     country: metaString(row, "country"),
     timezone: metaString(row, "timezone"),
     siteKey: metaString(row, "siteKey"),
+    hospitalName: metaString(row, "hospitalName"),
+    hospitalSource: metaString(row, "hospitalSource"),
+    hospitalFacilityId: metaString(row, "hospitalFacilityId"),
+    hospitalConfidence: metaString(row, "hospitalConfidence"),
+    networkOrg: metaString(row, "networkOrg"),
     latitude: metaNumber(row, "latitude"),
     longitude: metaNumber(row, "longitude"),
   };
@@ -75,6 +85,27 @@ export function dash(value: string): string {
 
 export function siteLine(row: CaseEventRecord): string {
   return metaString(row, "siteKey") || "Not provided";
+}
+
+export function hospitalLine(row: CaseEventRecord): string {
+  return metaString(row, "hospitalName") || "Not identified";
+}
+
+export function hospitalSourceLabel(source: string): string {
+  if (source === "site_key") return "Site code registry";
+  if (source === "network_org") return "Hospital network (IP org)";
+  if (source === "zip") return "PECC directory (unique ZIP)";
+  if (source === "unique_city") return "PECC directory (only hospital in city)";
+  if (source === "network_system") return "Hospital system (several campuses)";
+  if (source === "keyword") return "Network name only";
+  return source ? source : "—";
+}
+
+export function hospitalConfidenceLabel(confidence: string): string {
+  if (confidence === "high") return "High";
+  if (confidence === "medium") return "Medium";
+  if (confidence === "low") return "Low";
+  return confidence ? confidence : "—";
 }
 
 export function stepLine(row: CaseEventRecord): string {
@@ -170,6 +201,11 @@ export type SessionSummary = {
   country: string;
   timezone: string;
   site: string;
+  hospital: string;
+  hospitalSource: string;
+  hospitalFacilityId: string;
+  hospitalConfidence: string;
+  networkOrg: string;
   access: string;
   device: string;
   environment: string;
@@ -234,10 +270,13 @@ export function summarizeSessions(rows: CaseEventRecord[]): SessionSummary[] {
     const exited = ordered.some((e) => e.event_type === "case_exited");
     const locSource = [...ordered].reverse().find((e) => locationLine(e) !== "Not resolved") ?? last;
     const siteSource = [...ordered].reverse().find((e) => metaString(e, "siteKey")) ?? last;
+    const hospitalSource =
+      [...ordered].reverse().find((e) => metaString(e, "hospitalName")) ?? last;
     const coordSource =
       [...ordered].reverse().find((e) => localityOf(e).latitude != null && localityOf(e).longitude != null) ??
       locSource;
     const loc = localityOf(locSource);
+    const hospitalLoc = localityOf(hospitalSource);
     const coords = localityOf(coordSource);
     const completedEvent = [...ordered].reverse().find((e) => e.event_type === "case_completed");
     const elapsed =
@@ -263,6 +302,11 @@ export function summarizeSessions(rows: CaseEventRecord[]): SessionSummary[] {
       country: loc.country,
       timezone: loc.timezone,
       site: siteLine(siteSource),
+      hospital: hospitalLine(hospitalSource),
+      hospitalSource: hospitalLoc.hospitalSource,
+      hospitalFacilityId: hospitalLoc.hospitalFacilityId,
+      hospitalConfidence: hospitalLoc.hospitalConfidence,
+      networkOrg: hospitalLoc.networkOrg || loc.networkOrg,
       access: accessLabel(first.delivery_context),
       device: first.device_type ?? "unknown",
       environment: metaString(first, "environment") || "production",
@@ -367,6 +411,11 @@ export function sessionCsvRow(s: SessionSummary): Record<string, string | number
     latitude: s.latitude,
     longitude: s.longitude,
     site_code: s.site === "Not provided" ? "" : s.site,
+    hospital: s.hospital === "Not identified" ? "" : s.hospital,
+    hospital_source: s.hospitalSource || "",
+    hospital_facility_id: s.hospitalFacilityId || "",
+    hospital_confidence: s.hospitalConfidence || "",
+    network_org: s.networkOrg || "",
     access: s.access,
     device: s.device,
     environment: s.environment,
@@ -398,6 +447,11 @@ export function eventCsvRow(
     postal: metaString(r, "postal"),
     timezone: metaString(r, "timezone"),
     site_code: metaString(r, "siteKey"),
+    hospital: metaString(r, "hospitalName"),
+    hospital_source: metaString(r, "hospitalSource"),
+    hospital_facility_id: metaString(r, "hospitalFacilityId"),
+    hospital_confidence: metaString(r, "hospitalConfidence"),
+    network_org: metaString(r, "networkOrg"),
     environment: metaString(r, "environment") || "production",
   };
 }
@@ -835,6 +889,101 @@ export function siteCohorts(sessions: SessionSummary[]): SiteCohort[] {
     .sort((a, b) => b.starts - a.starts);
 }
 
+export function hospitalCohorts(sessions: SessionSummary[]): SiteCohort[] {
+  const map = new Map<string, SessionSummary[]>();
+  for (const s of sessions) {
+    const key =
+      s.hospital === "Not identified" || !s.hospital.trim() ? "Hospital not identified" : s.hospital;
+    const list = map.get(key) ?? [];
+    list.push(s);
+    map.set(key, list);
+  }
+  const total = sessions.length || 1;
+  return [...map.entries()]
+    .map(([label, list]) => {
+      const completions = list.filter((x) => x.outcome === "completed").length;
+      return {
+        label,
+        starts: list.length,
+        completions,
+        completion_rate: list.length ? completions / list.length : 0,
+        median_seconds: median(list.filter((x) => x.outcome === "completed").map(sessionWallSeconds)),
+        with_checkpoints: list.filter((x) => x.checkpoint_count > 0).length,
+        pct: list.length / total,
+      };
+    })
+    .sort((a, b) => {
+      const aUnknown = a.label === "Hospital not identified" ? 1 : 0;
+      const bUnknown = b.label === "Hospital not identified" ? 1 : 0;
+      if (aUnknown !== bUnknown) return aUnknown - bUnknown;
+      return b.starts - a.starts || a.label.localeCompare(b.label);
+    });
+}
+
+export type IdentifiedHospital = {
+  name: string;
+  place: string;
+  confidence: string;
+  source: string;
+  sessions: number;
+  completions: number;
+};
+
+function confidenceRank(value: string): number {
+  if (value === "high") return 3;
+  if (value === "medium") return 2;
+  if (value === "low") return 1;
+  return 0;
+}
+
+/** Named hospitals only. Unidentified sessions are omitted so the list is the facilities that ran a sim. */
+export function identifiedHospitals(sessions: SessionSummary[]): IdentifiedHospital[] {
+  const grouped = new Map<
+    string,
+    IdentifiedHospital & { places: Map<string, number> }
+  >();
+  for (const session of sessions) {
+    const name = session.hospital.trim();
+    if (!name || name === "Not identified") continue;
+    const place = [session.city, session.region].filter(Boolean).join(", ");
+    let row = grouped.get(name);
+    if (!row) {
+      row = {
+        name,
+        place,
+        confidence: session.hospitalConfidence,
+        source: session.hospitalSource,
+        sessions: 0,
+        completions: 0,
+        places: new Map(),
+      };
+      grouped.set(name, row);
+    }
+    row.sessions += 1;
+    if (session.outcome === "completed") row.completions += 1;
+    if (place) row.places.set(place, (row.places.get(place) ?? 0) + 1);
+    if (confidenceRank(session.hospitalConfidence) > confidenceRank(row.confidence)) {
+      row.confidence = session.hospitalConfidence;
+      row.source = session.hospitalSource;
+    }
+  }
+  return [...grouped.values()]
+    .map((row) => {
+      const place =
+        [...row.places.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ??
+        row.place;
+      return {
+        name: row.name,
+        place,
+        confidence: row.confidence,
+        source: row.source,
+        sessions: row.sessions,
+        completions: row.completions,
+      };
+    })
+    .sort((a, b) => b.sessions - a.sessions || a.name.localeCompare(b.name));
+}
+
 export function versionMix(sessions: SessionSummary[]): CountRow[] {
   return tally(sessions, (s) => s.app_version || "Unspecified", "Unspecified");
 }
@@ -944,7 +1093,7 @@ export function studyPacketText(opts: {
     "Data notes",
     "- One row per anonymous browser-tab session.",
     "- Duration uses reported elapsed_seconds when present, otherwise wall-clock from first to last action. Elapsed is capped at 12 hours at ingest.",
-    "- Location is approximate city-level IP geolocation. IP is not stored. This is not a named user, hospital, or street address.",
+    "- Location is approximate city-level IP geolocation. IP is not stored. Hospital is filled from a site code, a unique ZIP in the PECC directory, or the only hospital in that city.",
     `- Events loaded: ${opts.fetched}${opts.total != null ? ` of ${opts.total}` : ""}${opts.truncated ? " (TRUNCATED)" : ""}.`,
     "",
   ].join("\n");

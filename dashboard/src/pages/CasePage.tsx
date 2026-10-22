@@ -5,6 +5,7 @@ import { CountTable } from "../components/CountTable";
 import { DashboardCharts } from "../components/DashboardCharts";
 import { DataTable, type Column } from "../components/DataTable";
 import { FilterBar } from "../components/FilterBar";
+import { HospitalTable } from "../components/HospitalTable";
 import { SessionLink } from "../components/SessionLink";
 import { StudyBrief } from "../components/StudyBrief";
 import { StudyLedger } from "../components/StudyLedger";
@@ -261,6 +262,10 @@ export function CasePage() {
           nLabel="Reached"
           empty="No checkpoints. Add simbox-case-hooks.js or Storyline checkpoint calls for this case."
         />
+        <HospitalTable
+          sessions={sessions}
+          onSelect={(hospital) => setFilters({ ...filters, search: hospital })}
+        />
         <CountTable
           title="Site cohorts"
           rows={siteCohorts(sessions).map((s) => ({
@@ -306,7 +311,7 @@ export function CasePage() {
         />
         <CountTable
           title="Site codes"
-          caption="Optional ?simbox_site= value. Not a hospital name."
+          caption="Optional ?simbox_site= value; map codes to hospital names in the sites registry."
           rows={tally(sessions, (s) => (s.site === "Not provided" ? "" : s.site), "Not provided")}
           empty="No site codes in this range."
         />

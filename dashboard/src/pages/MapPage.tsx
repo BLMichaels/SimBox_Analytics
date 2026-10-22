@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { CountTable } from "../components/CountTable";
 import { FilterBar } from "../components/FilterBar";
+import { HospitalTable } from "../components/HospitalTable";
 import { TruncationNotice } from "../components/TruncationNotice";
 import { formatPercent, formatRange } from "../lib/dates";
 import { applyClientFilters, fetchCaseEvents } from "../lib/fetchEvents";
@@ -24,7 +25,7 @@ import {
   type MapScope,
   type UsaLevel,
 } from "../lib/mapData";
-import { filterSessionsByMinDuration, summarizeSessions } from "../lib/reporting";
+import { filterSessionsByMinDuration, summarizeSessions, type SessionSummary } from "../lib/reporting";
 import { useLiveReload } from "../lib/useLiveReload";
 
 const UsageMap = lazy(async () => {
@@ -37,6 +38,7 @@ export function MapPage() {
   const [error, setError] = useState<string | null>(null);
   const [placing, setPlacing] = useState(false);
   const [buckets, setBuckets] = useState<LocationBucket[]>([]);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [unplaced, setUnplaced] = useState(0);
   const [truncated, setTruncated] = useState(false);
   const [fetchedCount, setFetchedCount] = useState(0);
@@ -61,6 +63,7 @@ export function MapPage() {
     if (fetched.error) {
       setError(fetched.error);
       setBuckets([]);
+      setSessions([]);
       return;
     }
     setTruncated(fetched.truncated);
@@ -70,14 +73,13 @@ export function MapPage() {
       includeNonProduction: filters.includeNonProduction,
       search: filters.search,
     });
-    const sessions = sessionsForMetric(
-      filterSessionsByMinDuration(summarizeSessions(rows), filters.minSessionSeconds),
-      metric,
-    );
+    const summarized = filterSessionsByMinDuration(summarizeSessions(rows), filters.minSessionSeconds);
+    setSessions(summarized);
+    const located = sessionsForMetric(summarized, metric);
     setPlacing(true);
     try {
-      const placed = await placeSessions(sessions);
-      setUnplaced(sessions.length - placed.length);
+      const placed = await placeSessions(located);
+      setUnplaced(located.length - placed.length);
       setBuckets(bucketLocations(placed));
     } finally {
       setPlacing(false);
@@ -113,8 +115,8 @@ export function MapPage() {
         <p className="text-[11px] font-medium tracking-[0.18em] text-teal uppercase">Geography</p>
         <h1 className="font-serif mt-1 text-3xl text-ink">Usage map</h1>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-soft">
-          Anonymous sessions for {formatRange(bounds.from, bounds.to)}, placed by IP geolocation. Use United States
-          for locked state, county, and city-level views. Named users are not shown.
+          Anonymous sessions for {formatRange(bounds.from, bounds.to)}, placed by IP geolocation. Hospitals that
+          could be tied to a single facility are listed under the map. Named users are not shown.
         </p>
       </header>
 
@@ -364,6 +366,13 @@ export function MapPage() {
         </Suspense>
       )}
 
+      <div className="mt-6">
+        <HospitalTable
+          sessions={sessions}
+          onSelect={(hospital) => setFilters({ ...filters, search: hospital })}
+        />
+      </div>
+
       <div className="mt-6 grid gap-4 xl:grid-cols-2">
         <CountTable
           title={usa ? "United States locations" : "Locations"}
@@ -396,7 +405,10 @@ export function MapPage() {
             <li>Map data toggles between raw session count and each place&apos;s share of the total in the current view.</li>
             <li>Colors move from teal to gold to copper to red as values increase. Heatmaps use the same ramp.</li>
             <li>Started counts every anonymous session. Started and completed keeps only sessions that reached the last step.</li>
-            <li>Locations are IP geolocation (city-level), not a named user, hospital, or street address. The IP itself is not stored.</li>
+            <li>
+              Bubbles are city-level IP geolocation, not a street address. The hospital list below names a facility
+              only when a site code, ZIP, or one-hospital city makes that identification.
+            </li>
           </ul>
         </section>
       </div>

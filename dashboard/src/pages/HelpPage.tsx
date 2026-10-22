@@ -58,7 +58,7 @@ export function HelpPage() {
 
       <h2 className="font-serif mt-10 text-2xl text-ink">Study fields: location, hospital, user</h2>
       <p className="mt-2 text-sm leading-6 text-ink-soft">
-        Storyline on GitHub Pages cannot see a named user, hospital, or mailing address. For academic extracts we store what can be resolved honestly:
+        Storyline on GitHub Pages cannot see a named user or mailing address. For academic extracts we store what can be resolved honestly:
       </p>
       <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6">
         <li>
@@ -66,11 +66,18 @@ export function HelpPage() {
           geolocation at ingest. The learner’s IP is used for the lookup only and is not stored.
         </li>
         <li>
-          <strong>Site code</strong> (hospital or program identifier you assign) is recorded when the case URL includes{" "}
-          <code className="font-mono">?simbox_site=HOSP01</code>. Only letters, numbers, underscore, and hyphen are accepted. This is not a hospital name.
+          <strong>Hospital</strong> is identified when possible: (1) a registered site code such as{" "}
+          <code className="font-mono">?simbox_site=EMORY_ED</code>, (2) the session ZIP matches exactly one hospital
+          in the PECC directory, or (3) that city and state have only one hospital. A health-system name in the
+          network org is recorded when it does not pick a single campus. Home Wi‑Fi and cellular in a city with
+          several hospitals stay unidentified.
         </li>
         <li>
-          <strong>User identity and hospital name</strong> are not collected. The session ID is an anonymous random value in the browser tab.
+          <strong>Site code</strong> is an optional hospital/program identifier you assign. Only letters, numbers,
+          underscore, and hyphen are accepted.
+        </li>
+        <li>
+          <strong>User identity</strong> is not collected. The session ID is an anonymous random value in the browser tab.
         </li>
       </ul>
       <p className="mt-3 text-sm leading-6 text-ink-soft">

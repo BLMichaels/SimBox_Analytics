@@ -12,6 +12,7 @@ import {
   siteCohorts,
   stepLine,
   studyBrief,
+  identifiedHospitals,
   summarizeSessions,
   timeOnStep,
   unionStepLabels,
@@ -55,7 +56,14 @@ describe("summarizeSessions", () => {
         event_type: "case_completed",
         occurred_at: "2026-08-19T12:04:00.000Z",
         elapsed_seconds: 240,
-        metadata: { step: 5, slideTitle: "Step 5", siteKey: "EMORY1" },
+        metadata: {
+          step: 5,
+          slideTitle: "Step 5",
+          siteKey: "EMORY1",
+          hospitalName: "Emory University Hospital",
+          hospitalSource: "site_key",
+          networkOrg: "Emory Healthcare",
+        },
       }),
     ];
     const [session] = summarizeSessions(rows);
@@ -66,6 +74,17 @@ describe("summarizeSessions", () => {
     expect(session.county).toBe("");
     expect(session.postal).toBe("30303");
     expect(session.site).toBe("EMORY1");
+    expect(session.hospital).toBe("Emory University Hospital");
+    expect(session.hospitalSource).toBe("site_key");
+    const hospitals = identifiedHospitals([session]);
+    expect(hospitals).toEqual([
+      expect.objectContaining({
+        name: "Emory University Hospital",
+        place: "Atlanta, Georgia",
+        sessions: 1,
+        completions: 1,
+      }),
+    ]);
     expect(session.elapsed_seconds).toBe(240);
     expect(unionStepLabels([session])).toEqual(["Step 2"]);
   });
