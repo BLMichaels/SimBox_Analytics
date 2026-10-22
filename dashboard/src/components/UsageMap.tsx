@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { LngLatBounds, Map as MapLibreMap, NavigationControl, Popup, ScaleControl } from "maplibre-gl";
+import { LngLatBounds, Map as MapLibreMap, NavigationControl, Popup, ScaleControl, setWorkerUrl } from "maplibre-gl";
 import type { GeoJSONSource, LngLatBoundsLike, MapLayerMouseEvent, StyleSpecification } from "maplibre-gl";
 import { feature } from "topojson-client";
 import type { Topology } from "topojson-specification";
@@ -23,6 +23,10 @@ import {
   rollupUsStates,
 } from "../lib/mapData";
 import "maplibre-gl/dist/maplibre-gl.css";
+
+// The production bundle's import.meta.url no longer sits next to maplibre-gl-worker.mjs.
+// Without this, vector tiles never decode and the map stays a blank style background.
+setWorkerUrl(`${import.meta.env.BASE_URL}assets/maplibre/maplibre-gl-worker.mjs`);
 
 type Props = {
   buckets: LocationBucket[];
